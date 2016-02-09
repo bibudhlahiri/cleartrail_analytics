@@ -1,1 +1,1 @@
-# cleartrail_analytics
+The goal is to identify the type of user activity, based on session, transaction and packet-level data on Twitter.
