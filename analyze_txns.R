@@ -72,10 +72,41 @@ event_from_txn <- function()
   training_data <- txn_data[train, ]
   test_data <- txn_data[test, ]
   
-  #training_data$Event <- relevel(training_data$Event, ref = "Login Twitter")
-  #logr <- multinom("Event ~ Tx + Rx + factor(DomainName)", data = training_data)
   model <- rpart("Event ~ Tx + Rx + factor(DomainName)", data = training_data)
   test_data[, predicted_event := as.character(predict(model, newdata = test_data, type = "class"))]
-  print(table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted')))
+  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
+  
+  #Measure overall accuracy
+  setkey(test_data, Event, predicted_event)
+  cat(paste("Overall accuracy = ", nrow(test_data[(Event == predicted_event),])/nrow(test_data), "\n\n", sep = "")) #0.43143
+  dt_prec_recall <- as.data.table(prec_recall)
+  
+  #Compute the micro-average recall values of the classes
+  
+  setkey(dt_prec_recall, actual)
+  row_totals <- dt_prec_recall[, list(row_total = sum(N)), by = actual]
+  setkey(row_totals, actual)
+  for_recall <- dt_prec_recall[row_totals, nomatch = 0]
+  setkey(for_recall, actual, predicted)
+  for_recall <- for_recall[(actual == predicted),]
+  for_recall[, recall := N/row_total]
+  for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
+  setnames(for_recall, "actual", "Event")
+  print(for_recall)
+  cat("\n")
+  
+  #Compute the micro-average precision values of the classes
+  
+  setkey(dt_prec_recall, predicted)
+  column_totals <- dt_prec_recall[, list(column_total = sum(N)), by = predicted]
+  setkey(column_totals, predicted)
+  for_precision <- dt_prec_recall[column_totals, nomatch = 0]
+  setkey(for_precision, actual, predicted)
+  for_precision <- for_precision[(actual == predicted),]
+  for_precision[, precision := N/column_total]
+  for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")]
+  print(for_precision)
+  
+  prec_recall
 }
 
