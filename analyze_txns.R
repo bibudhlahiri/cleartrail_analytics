@@ -159,11 +159,9 @@ event_from_txn <- function()
 
 visualizations <- function()
 {
-  input_data <- load_txn_data()
-  #input_data <- load_packet_data()
-  print(class(input_data))
-  cat(paste("nrow(input_data) = ", nrow(input_data), "\n", sep = ""))
-  input_data[, Event := apply(data, 1, function(row) is_interesting_event(as.character(row["Event"])))]
+  #input_data <- load_txn_data()
+  input_data <- load_packet_data()
+  input_data[, Event := apply(input_data, 1, function(row) is_interesting_event(as.character(row["Event"])))]
   #filename <- "./figures/bytes_received_by_transactions.png"  
   filename <- "./figures/bytes_received_by_packets.png" 
   png(filename, width = 600, height = 480, units = "px")
@@ -189,5 +187,37 @@ visualizations <- function()
     cat("Distribution of Tx is\n")
     print(fivenum(this_set$Tx))
   }
+}
+
+#To train with CRF++, from /Users/blahiri/cleartrail_analytics, run the following command: /Users/blahiri/crf++/CRF++-0.58/crf_learn crf_template_ct /Users/blahiri/cleartrail_osn/for_CRF/for_CRF.data model_ct
+
+prepare_packet_data_for_CRF <- function()
+{
+  packet_data <- data.table()
+  for (i in 1:1)
+  {
+    filename <- paste("/Users/blahiri/cleartrail_osn/SampleDataSetForTwitter/TestCase_", i, "/TC", i, "_PacketData_DataSet.csv", sep = "")
+    this_set <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character"),
+                    data.table = TRUE)
+    this_set[, LocalTime := strftime(strptime(this_set$LocalTime, "%d/%b/%Y %H:%M:%S"), "%H:%M:%S")]     
+              
+    #Get the event corresponding to each packet
+    filename <- paste("/Users/blahiri/cleartrail_osn/SampleDataSetForTwitter/TestCase_", i, "/Twitter_TC_", i, ".csv", sep = "")
+    events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("numeric", "Date", "character", "Date"),
+                    data.table = TRUE)
+    events[, StartTime := strftime(strptime(events$StartTime, "%H:%M:%S"), "%H:%M:%S")]
+    events[, EndTime := strftime(strptime(events$EndTime, "%H:%M:%S"), "%H:%M:%S")]
+    #For each packet, find the event such that the timestamp of the packet falls between the starttime and the end-time of the event (both boundaries included)
+    this_set[, Event := apply(this_set, 1, function(row) lookup_event(as.character(row["LocalTime"]), events))]
+    this_set[, Event := apply(this_set, 1, function(row) standardize_event(as.character(row["Event"])))]
+    
+    packet_data <- rbindlist(list(packet_data, this_set))
+  }
+  filename <- "/Users/blahiri/cleartrail_osn/for_CRF/for_CRF.data"
+  packet_data <- packet_data[, .SD, .SDcols = c("Tx", "Rx", "DomainName", "Event")]
+  packet_data[, Event := apply(packet_data, 1, function(row) gsub(" ", "_", as.character(row["Event"])))] #Do cut -f 4 -d ' ' for_CRF.data | uniq to check results
+  write.table(packet_data, filename, sep = " ", row.names = FALSE, col.names = FALSE, quote = FALSE)
 }
 
