@@ -189,7 +189,8 @@ visualizations <- function()
   }
 }
 
-#To train with CRF++, from /Users/blahiri/cleartrail_analytics, run the following command: /Users/blahiri/crf++/CRF++-0.58/crf_learn crf_template_ct /Users/blahiri/cleartrail_osn/for_CRF/for_CRF.data model_ct
+#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn crf_template_ct ~/cleartrail_osn/for_CRF/train_ct_CRF.data model_ct
+#To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/predicted_labels_ct.data
 
 prepare_packet_data_for_CRF <- function()
 {
@@ -215,9 +216,63 @@ prepare_packet_data_for_CRF <- function()
     
     packet_data <- rbindlist(list(packet_data, this_set))
   }
-  filename <- "/Users/blahiri/cleartrail_osn/for_CRF/for_CRF.data"
+  
   packet_data <- packet_data[, .SD, .SDcols = c("Tx", "Rx", "DomainName", "Event")]
   packet_data[, Event := apply(packet_data, 1, function(row) gsub(" ", "_", as.character(row["Event"])))] #Do cut -f 4 -d ' ' for_CRF.data | uniq to check results
-  write.table(packet_data, filename, sep = " ", row.names = FALSE, col.names = FALSE, quote = FALSE)
+  
+  train = sample(1:nrow(packet_data), 0.5*nrow(packet_data))
+  test = (-train)
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(packet_data) - length(train)), "\n", sep = ""))
+  
+  training_data <- packet_data[train, ]
+  test_data <- packet_data[test, ]
+  
+  filename <- "/Users/blahiri/cleartrail_osn/for_CRF/train_ct_CRF.data"
+  write.table(training_data, filename, sep = " ", row.names = FALSE, col.names = FALSE, quote = FALSE)
+  filename <- "/Users/blahiri/cleartrail_osn/for_CRF/test_ct_CRF.data"
+  write.table(test_data, filename, sep = " ", row.names = FALSE, col.names = FALSE, quote = FALSE)
+}
+
+measure_precision_recall <- function()
+{
+  filename <- "~/cleartrail_osn/for_CRF/predicted_labels_ct.data"
+  crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("numeric", "numeric", "character", "character", "character"),
+                    data.table = TRUE)
+  setnames(crf_outcome, names(crf_outcome), c("Tx", "Rx", "DomainName", "Event", "predicted_event"))
+  prec_recall <- table(crf_outcome[, Event], crf_outcome[, predicted_event], dnn = list('actual', 'predicted'))
+  
+  #Measure overall accuracy
+  setkey(crf_outcome, Event, predicted_event)
+  cat(paste("Overall accuracy = ", nrow(crf_outcome[(Event == predicted_event),])/nrow(crf_outcome), "\n\n", sep = "")) #0.763454
+  
+  print(prec_recall)
+  
+  #Compute the micro-average recall values of the classes
+  
+  dt_prec_recall <- as.data.table(prec_recall)
+  setkey(dt_prec_recall, actual)
+  row_totals <- dt_prec_recall[, list(row_total = sum(N)), by = actual]
+  setkey(row_totals, actual)
+  for_recall <- dt_prec_recall[row_totals, nomatch = 0]
+  setkey(for_recall, actual, predicted)
+  for_recall <- for_recall[(actual == predicted),]
+  for_recall[, recall := N/row_total]
+  #for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
+  setnames(for_recall, "actual", "Event")
+  print(for_recall)
+  cat("\n")
+  
+  #Compute the micro-average precision values of the classes
+  
+  setkey(dt_prec_recall, predicted)
+  column_totals <- dt_prec_recall[, list(column_total = sum(N)), by = predicted]
+  setkey(column_totals, predicted)
+  for_precision <- dt_prec_recall[column_totals, nomatch = 0]
+  setkey(for_precision, actual, predicted)
+  for_precision <- for_precision[(actual == predicted),]
+  for_precision[, precision := N/column_total]
+  #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] #Tweet_+_Image has a 2% recall (6/271: needs improvement)
+  print(for_precision)
 }
 
