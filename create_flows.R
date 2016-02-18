@@ -10,11 +10,11 @@ create_session_data <- function()
               
   #Get the sessions (unique combinations of server IP, server port, client IP, client port) first. Get the earliest and last timestamps for each, and get the number of packets exchanged also.
   #Identify the server and client IP for each packet. Both can be senders and receivers.
-  this_set[, ServerIP := apply(this_set, 1, function(row) get_server_IP(as.character(row["SourceIP"]), as.character(row["DestIP"])))]
-  this_set[, ClientIP := apply(this_set, 1, function(row) get_client_IP(as.character(row["SourceIP"]), as.character(row["DestIP"])))]
+  this_set[, ServerIP := apply(this_set, 1, function(row) get_server_IP(as.character(row["SourceIP"]), as.numeric(row["SourcePort"]), as.character(row["DestIP"]), as.numeric(row["DestPort"])))]
+  this_set[, ClientIP := apply(this_set, 1, function(row) get_client_IP(as.character(row["SourceIP"]), as.numeric(row["SourcePort"]), as.character(row["DestIP"]), as.numeric(row["DestPort"])))]
   this_set[, ServerPort := apply(this_set, 1, function(row) get_server_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
   this_set[, ClientPort := apply(this_set, 1, function(row) get_client_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
-  this_set[, Direction := apply(this_set, 1, function(row) get_direction(as.character(row["SourceIP"]), as.character(row["DestIP"])))]
+  this_set[, Direction := apply(this_set, 1, function(row) get_direction(as.numeric(row["DestPort"])))]
   #this_set[, RawPacketID := 1:nrow(this_set)]
   
   setkey(this_set, ServerIP, ServerPort, ClientIP, ClientPort)
@@ -37,12 +37,10 @@ analyze_session_data <- function()
   
   filename <- "./figures/session_duration_distn.png" 
   png(filename, width = 600, height = 480, units = "px")
-
   p <- ggplot(sessions, aes(duration)) + geom_histogram(aes(y = ..density..)) + geom_density() +  
               labs(x = "Session duration in seconds") + ylab("Density")
   print(p)
   aux <- dev.off()
-  
   print(cor(sessions$n_packets, sessions$duration)) #0.3383304
 }
 
@@ -72,9 +70,6 @@ create_flow_data <- function(packets, sessions)
       for (j in 2:n_packets_this_session)
       {
         #Is the direction of this packet different from the direction of the previous packet in the same flow? If so, then we need to start a new flow.
-        #cat(paste("i = ", i, ", j = ", j, ", packets_this_session[j, Direction] = ", packets_this_session[j, Direction], 
-        #        ", direction = ", direction, ", packets_this_session[j, SourceIP] = ", packets_this_session[j, SourceIP], 
-        #        ", packets_this_session[j, RawPacketID] = ", packets_this_session[j, RawPacketID], "\n", sep = ""))
         if (packets_this_session[j, Direction] != direction)
         {
           direction <- packets_this_session[j, Direction]
@@ -90,9 +85,9 @@ create_flow_data <- function(packets, sessions)
 }
 
 
-get_server_IP <- function(SourceIP, DestIP)
+get_server_IP <- function(SourceIP, SourcePort, DestIP, DestPort)
 {
-  if (substr(SourceIP, 1, 4) == "192.")  #Packet from client to server
+  if (DestPort == 443)  #Packet from client to server
     return(DestIP)
   return(SourceIP)
 }
@@ -104,9 +99,9 @@ get_server_port <- function(SourcePort, DestPort)
   return(DestPort)
 }
 
-get_client_IP <- function(SourceIP, DestIP)
+get_client_IP <- function(SourceIP, SourcePort, DestIP, DestPort)
 {
-  if (substr(SourceIP, 1, 4) == "192.")  #Packet from client to server
+  if (DestPort == 443)  #Packet from client to server
     return(SourceIP)
   return(DestIP)
 }
@@ -118,9 +113,9 @@ get_client_port <- function(SourcePort, DestPort)
   return(SourcePort)
 }
 
-get_direction <- function(SourceIP, DestIP)
+get_direction <- function(DestPort)
 {
-  if (substr(SourceIP, 1, 4) == "192.")  #Packet from client to server
+  if (DestPort == 443)  #Packet from client to server
     return("upstream")
   return("downstream")
 }
