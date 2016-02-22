@@ -104,7 +104,6 @@ apply_decision_tree <- function()
                                    "character", "numeric", "numeric", "numeric", "numeric"),
                     data.table = TRUE)
   hidden_and_vis_states$Event <- as.factor(hidden_and_vis_states$Event)
-  hidden_and_vis_states$majority_domain <- factor(hidden_and_vis_states$majority_domain, levels = hidden_and_vis_states$majority_domain)
                    
   train = sample(1:nrow(hidden_and_vis_states), 0.5*nrow(hidden_and_vis_states))
   test = (-train)
@@ -114,10 +113,6 @@ apply_decision_tree <- function()
   test_data <- hidden_and_vis_states[test, ]
   
   #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
-  training_data$majority_domain <- factor(training_data$majority_domain, 
-                                          levels = hidden_and_vis_states$majority_domain)
-  test_data$majority_domain <- factor(test_data$majority_domain, 
-                                      levels = hidden_and_vis_states$majority_domain)
   test_data <- test_data[test_data$majority_domain %in% unique(training_data$majority_domain),] 
   
   model <- rpart("Event ~ n_packets + n_sessions + n_flows + n_downstream_packets + n_upstream_packets + 
