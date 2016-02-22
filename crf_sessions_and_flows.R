@@ -125,6 +125,36 @@ apply_decision_tree <- function()
   
   #Measure overall accuracy
   setkey(test_data, Event, predicted_event)
-  cat(paste("Overall accuracy = ", nrow(test_data[(Event == predicted_event),])/nrow(test_data), "\n\n", sep = "")) #0.43143
+  cat(paste("Overall accuracy = ", nrow(test_data[(Event == predicted_event),])/nrow(test_data), "\n\n", sep = "")) #0.0.608391
+  
+  #Compute the micro-average recall values of the classes
+  
+  dt_prec_recall <- as.data.table(prec_recall)
+  setkey(dt_prec_recall, actual)
+  row_totals <- dt_prec_recall[, list(row_total = sum(N)), by = actual]
+  setkey(row_totals, actual)
+  for_recall <- dt_prec_recall[row_totals, nomatch = 0]
+  setkey(for_recall, actual, predicted)
+  for_recall <- for_recall[(actual == predicted),]
+  for_recall[, recall := N/row_total]
+  #for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
+  setnames(for_recall, "actual", "Event")
+  print(for_recall) #Re-Tweet, Reply Tweet and Tweet + Image have recall values 0.5961538, 0.7391304 and 0.8148148 respectively
+  cat("\n")
+  
+  #Compute the micro-average precision values of the classes
+  
+  setkey(dt_prec_recall, predicted)
+  column_totals <- dt_prec_recall[, list(column_total = sum(N)), by = predicted]
+  setkey(column_totals, predicted)
+  for_precision <- dt_prec_recall[column_totals, nomatch = 0]
+  setkey(for_precision, actual, predicted)
+  for_precision <- for_precision[(actual == predicted),]
+  for_precision[, precision := N/column_total]
+  #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] #Tweet_+_Image has a 2% recall (6/271: needs improvement)
+  print(for_precision) #Re-Tweet, Reply Tweet and Tweet + Image have recall values 0.6078431, 0.4857143 and 1.0 respectively
+  
+  #Some of the most important predictors are: majority_domain (0.14384041), upstream_bytes (0.14375551), n_packets (0.14084035), n_upstream_packets (0.13911527), avg_packets_per_session (0.13765281),
+  #n_flows (0.09794633)
   model
 }
