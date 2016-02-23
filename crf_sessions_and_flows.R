@@ -164,6 +164,8 @@ apply_decision_tree <- function()
 #We take the packets in sessions, and look up for the events corresponding to the packets through timestamps. We group the packets in sessions as if packets are words/tokens and
 #sessions are sentences. Then, we apply CRF on the training data and fit the model on test data. We should split all the available sessions into two halves: training and testing, but should not 
 #split the packets in a single session. 
+#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn SET2/crf_template_ct ~/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data model_ct
+#To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data
 
 prepare_packet_data_for_CRF <- function()
 {
@@ -206,14 +208,13 @@ prepare_packet_data_for_CRF <- function()
   n_sessions <- max(revised_packets$session_id)
   train <- 1:(floor(n_sessions/2))
   test <- (floor(n_sessions/2) + 1):n_sessions
-  cat("train\n")
-  print(train)
-  cat("test\n")
-  print(test)
-  
+    
   training_data <- revised_packets[(session_id %in% train),]
   test_data <- revised_packets[(session_id %in% test),]
   cat(paste("n_sessions = ", n_sessions, ", size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
+  
+  print(table(training_data$Event)) #Reply_Tweet:354, Retweet:406, Tweet:100, Tweet_+_Image:4419
+  print(table(test_data$Event)) #Reply_Tweet:1649, Retweet:1794, Tweet:188, Tweet_+_Image:254
   
   print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data")
   print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data")
@@ -235,4 +236,49 @@ print_crf_format <- function(input_data, filename)
     cat("\n")
   }
   sink()
+}
+
+measure_precision_recall <- function()
+{
+  #Remove the blank lines after end of each session so that fread() does not halt
+  system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data")
+  filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("Date", "numeric", "numeric", "numeric", "character", "character", "character", "character"),
+                    data.table = TRUE)
+  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", "Direction", "Event", "predicted_event"))
+  prec_recall <- table(crf_outcome[, Event], crf_outcome[, predicted_event], dnn = list('actual', 'predicted'))
+  
+  #Measure overall accuracy
+  setkey(crf_outcome, Event, predicted_event)
+  cat(paste("Overall accuracy = ", nrow(crf_outcome[(Event == predicted_event),])/nrow(crf_outcome), "\n\n", sep = "")) #0.4604
+  
+  print(prec_recall)
+  
+  #Compute the micro-average recall values of the classes
+  
+  dt_prec_recall <- as.data.table(prec_recall)
+  setkey(dt_prec_recall, actual)
+  row_totals <- dt_prec_recall[, list(row_total = sum(N)), by = actual]
+  setkey(row_totals, actual)
+  for_recall <- dt_prec_recall[row_totals, nomatch = 0]
+  setkey(for_recall, actual, predicted)
+  for_recall <- for_recall[(actual == predicted),]
+  for_recall[, recall := N/row_total]
+  #for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
+  setnames(for_recall, "actual", "Event")
+  print(for_recall) #Reply Tweet and Retweet have recall values 0 and 0.99 respectively. Most packets simply get mapped to Retweet.
+  cat("\n")
+  
+  #Compute the micro-average precision values of the classes
+  
+  setkey(dt_prec_recall, predicted)
+  column_totals <- dt_prec_recall[, list(column_total = sum(N)), by = predicted]
+  setkey(column_totals, predicted)
+  for_precision <- dt_prec_recall[column_totals, nomatch = 0]
+  setkey(for_precision, actual, predicted)
+  for_precision <- for_precision[(actual == predicted),]
+  for_precision[, precision := N/column_total]
+  #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] 
+  print(for_precision) #Reply Tweet and Retweet have precision values 0 and 0.4655489 respectively
 }
