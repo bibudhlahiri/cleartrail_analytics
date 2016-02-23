@@ -3,14 +3,16 @@ library(rpart)
 
 label_packets <- function()
 {
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
   revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
                     data.table = TRUE)
                     
   #Get the event corresponding to each transaction
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/Twittertestcase_10_Feb.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
@@ -49,7 +51,8 @@ label_packets <- function()
   hidden_and_vis_states[, avg_packets_per_session := n_packets/n_sessions]
   hidden_and_vis_states[, avg_packets_per_flow := n_packets/n_flows]
   
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/hidden_and_vis_states.csv"
   
   #Re-order by time before writing to CSV
   setkey(hidden_and_vis_states, LocalTime)
@@ -98,14 +101,14 @@ lookup_event <- function(LocalTime, events)
 
 apply_decision_tree <- function()
 {
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
   hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
                                    "character", "numeric", "numeric", "numeric", "numeric"),
                     data.table = TRUE)
   hidden_and_vis_states$Event <- as.factor(hidden_and_vis_states$Event)
                    
-  train = sample(1:nrow(hidden_and_vis_states), 0.5*nrow(hidden_and_vis_states))
+  train = sample(1:nrow(hidden_and_vis_states), 0.7*nrow(hidden_and_vis_states))
   test = (-train)
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(hidden_and_vis_states) - length(train)), "\n", sep = ""))
   
@@ -125,7 +128,7 @@ apply_decision_tree <- function()
   
   #Measure overall accuracy
   setkey(test_data, Event, predicted_event)
-  cat(paste("Overall accuracy = ", nrow(test_data[(Event == predicted_event),])/nrow(test_data), "\n\n", sep = "")) #0.0.608391
+  cat(paste("Overall accuracy = ", nrow(test_data[(Event == predicted_event),])/nrow(test_data), "\n\n", sep = "")) #0.608391
   
   #Compute the micro-average recall values of the classes
   
@@ -137,7 +140,6 @@ apply_decision_tree <- function()
   setkey(for_recall, actual, predicted)
   for_recall <- for_recall[(actual == predicted),]
   for_recall[, recall := N/row_total]
-  #for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
   setnames(for_recall, "actual", "Event")
   print(for_recall) #Re-Tweet, Reply Tweet and Tweet + Image have recall values 0.5961538, 0.7391304 and 0.8148148 respectively
   cat("\n")
@@ -151,10 +153,86 @@ apply_decision_tree <- function()
   setkey(for_precision, actual, predicted)
   for_precision <- for_precision[(actual == predicted),]
   for_precision[, precision := N/column_total]
-  #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] #Tweet_+_Image has a 2% recall (6/271: needs improvement)
   print(for_precision) #Re-Tweet, Reply Tweet and Tweet + Image have recall values 0.6078431, 0.4857143 and 1.0 respectively
   
   #Some of the most important predictors are: majority_domain (0.14384041), upstream_bytes (0.14375551), n_packets (0.14084035), n_upstream_packets (0.13911527), avg_packets_per_session (0.13765281),
   #n_flows (0.09794633)
   model
+}
+
+
+#We take the packets in sessions, and look up for the events corresponding to the packets through timestamps. We group the packets in sessions as if packets are words/tokens and
+#sessions are sentences. Then, we apply CRF on the training data and fit the model on test data. We should split all the available sessions into two halves: training and testing, but should not 
+#split the packets in a single session. 
+
+prepare_packet_data_for_CRF <- function()
+{
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
+                                   "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
+                    data.table = TRUE)
+  setkey(revised_packets, session_id, LocalTime)
+  revised_packets <- revised_packets[order(session_id, LocalTime),]
+  
+  #Get the event corresponding to each packet
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("character", "Date", "Date"),
+                    data.table = TRUE)
+  events[, StartTime := strftime(strptime(events$StartTime, "%H:%M:%S"), "%H:%M:%S")]
+  events[, EndTime := strftime(strptime(events$EndTime, "%H:%M:%S"), "%H:%M:%S")]
+  #For each packet, find the event such that the timestamp of the packet falls between the starttime and the end-time of the event (both boundaries included)
+  revised_packets[, Event := apply(revised_packets, 1, function(row) lookup_event(as.character(row["LocalTime"]), events))]
+  revised_packets$Event <- as.character(revised_packets$Event)
+  
+  #Eliminate timestamps for which we do not have any labels because they are prior to the user starts or after the user ends
+  user_starts_at <- events[1, StartTime]
+  user_ends_at <- events[nrow(events), EndTime]
+  setkey(revised_packets, LocalTime)
+  revised_packets <- revised_packets[((LocalTime >= as.character(user_starts_at)) & (LocalTime <= as.character(user_ends_at))),]
+  
+  #There can still be some "holes" in time when we do not know what happened. Let us skip those for now.
+  setkey(revised_packets, Event)
+  revised_packets <- revised_packets[((nchar(Event) > 0) & (Event != "character(0)")),]
+  
+  #Change the key back to session_id and LocalTime so that all packets for a session are printed together
+  setkey(revised_packets, session_id, LocalTime)
+  #We need to retain the timestamp in the test data so that we can group by it later to get the majority vote among labeled events for a timestamp.
+  revised_packets <- revised_packets[, .SD, .SDcols = c("session_id", "LocalTime", "Tx", "Rx", "DomainName", "Direction", "Event")]
+  revised_packets[, Event := apply(revised_packets, 1, function(row) gsub(" ", "_", as.character(row["Event"])))]
+  
+  #Count the sessions and split in two
+  n_sessions <- max(revised_packets$session_id)
+  train <- 1:(floor(n_sessions/2))
+  test <- (floor(n_sessions/2) + 1):n_sessions
+  cat("train\n")
+  print(train)
+  cat("test\n")
+  print(test)
+  
+  training_data <- revised_packets[(session_id %in% train),]
+  test_data <- revised_packets[(session_id %in% test),]
+  cat(paste("n_sessions = ", n_sessions, ", size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
+  
+  print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data")
+  print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data")
+}
+
+print_crf_format <- function(input_data, filename)
+{
+  sink(filename)
+  nrows <- nrow(input_data)
+  curr_session_id <- input_data[1, session_id]
+  for (i in 1:nrows)
+  {
+    if (input_data[i, session_id] != curr_session_id)
+    {
+      cat(". . . . . . end_of_session\n\n")
+      curr_session_id <- input_data[i, session_id]
+    }
+    cat(paste(input_data[i, LocalTime], input_data[i, session_id], input_data[i, Tx], input_data[i, Rx], input_data[i, DomainName], input_data[i, Direction], input_data[i, Event], collapse = " "))
+    cat("\n")
+  }
+  sink()
 }
