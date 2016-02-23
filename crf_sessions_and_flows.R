@@ -198,10 +198,24 @@ prepare_packet_data_for_CRF <- function()
   setkey(revised_packets, Event)
   revised_packets <- revised_packets[((nchar(Event) > 0) & (Event != "character(0)")),]
   
+  #Join the timestamp-related aggregated features with the timestamps in this data to introduce additional features.
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
+  hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
+                                   "character", "numeric", "numeric", "numeric", "numeric"),
+                    data.table = TRUE)
+  hidden_and_vis_states[, Event := NULL]
+  setkey(hidden_and_vis_states, LocalTime)
+  setkey(revised_packets, LocalTime)
+  revised_packets <- revised_packets[hidden_and_vis_states, nomatch = 0]
+    
   #Change the key back to session_id and LocalTime so that all packets for a session are printed together
   setkey(revised_packets, session_id, LocalTime)
   #We need to retain the timestamp in the test data so that we can group by it later to get the majority vote among labeled events for a timestamp.
-  revised_packets <- revised_packets[, .SD, .SDcols = c("session_id", "LocalTime", "Tx", "Rx", "DomainName", "Direction", "Event")]
+  revised_packets <- revised_packets[, .SD, .SDcols = c("session_id", "LocalTime", "Tx", "Rx", "DomainName", 
+                                                        "Direction", "n_packets", "n_sessions", "n_flows", "n_downstream_packets", "n_upstream_packets", 
+                                                        "majority_domain", "upstream_bytes", "downstream_bytes", "frac_upstream_packets", "frac_downstream_packets", 
+                                                        "avg_packets_per_session", "avg_packets_per_flow", "Event")]
   revised_packets[, Event := apply(revised_packets, 1, function(row) gsub(" ", "_", as.character(row["Event"])))]
   
   #Count the sessions and split in two
@@ -218,6 +232,7 @@ prepare_packet_data_for_CRF <- function()
   
   print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data")
   print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data")
+  revised_packets
 }
 
 print_crf_format <- function(input_data, filename)
@@ -229,10 +244,13 @@ print_crf_format <- function(input_data, filename)
   {
     if (input_data[i, session_id] != curr_session_id)
     {
-      cat(". . . . . . end_of_session\n\n")
+      cat(paste(paste(rep(".", 18), collapse = " "), " end_of_session\n\n", sep = ""))
       curr_session_id <- input_data[i, session_id]
     }
-    cat(paste(input_data[i, LocalTime], input_data[i, session_id], input_data[i, Tx], input_data[i, Rx], input_data[i, DomainName], input_data[i, Direction], input_data[i, Event], collapse = " "))
+    cat(paste(input_data[i, LocalTime], input_data[i, session_id], input_data[i, Tx], input_data[i, Rx], input_data[i, DomainName], input_data[i, Direction], 
+              input_data[i, n_packets], input_data[i, n_sessions], input_data[i, n_flows], input_data[i, n_downstream_packets], input_data[i, n_upstream_packets], input_data[i, majority_domain], 
+              input_data[i, upstream_bytes], input_data[i, downstream_bytes], input_data[i, frac_upstream_packets], input_data[i, frac_downstream_packets], input_data[i, avg_packets_per_session],
+              input_data[i, avg_packets_per_flow], input_data[i, Event], collapse = " "))
     cat("\n")
   }
   sink()
@@ -244,14 +262,20 @@ measure_precision_recall <- function()
   system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data")
   filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("Date", "numeric", "numeric", "numeric", "character", "character", "character", "character"),
+                    colClasses = c("Date", "numeric", "numeric", "numeric", "character", "character", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                                   "numeric", "numeric", "numeric", "numeric", "numeric",
+                                   "numeric", "character", "character"),
                     data.table = TRUE)
-  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", "Direction", "Event", "predicted_event"))
+  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", "Direction",  
+                                              "n_packets", "n_sessions", "n_flows", "n_downstream_packets", "n_upstream_packets", "majority_domain",
+                                              "upstream_bytes", "downstream_bytes", "frac_upstream_packets", "frac_downstream_packets", "avg_packets_per_session",
+                                              "avg_packets_per_flow", "Event", "predicted_event"))
   prec_recall <- table(crf_outcome[, Event], crf_outcome[, predicted_event], dnn = list('actual', 'predicted'))
   
   #Measure overall accuracy
   setkey(crf_outcome, Event, predicted_event)
-  cat(paste("Overall accuracy = ", nrow(crf_outcome[(Event == predicted_event),])/nrow(crf_outcome), "\n\n", sep = "")) #0.4604
+  cat(paste("Overall accuracy = ", nrow(crf_outcome[(Event == predicted_event),])/nrow(crf_outcome), "\n\n", sep = "")) #0.72459
   
   print(prec_recall)
   
@@ -267,7 +291,7 @@ measure_precision_recall <- function()
   for_recall[, recall := N/row_total]
   #for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
   setnames(for_recall, "actual", "Event")
-  print(for_recall) #Reply Tweet and Retweet have recall values 0 and 0.99 respectively. Most packets simply get mapped to Retweet.
+  print(for_recall) #Reply Tweet, Retweet and Tweet_+_Image have recall values 0.5360825, 1.0 and 0.5157480 respectively.
   cat("\n")
   
   #Compute the micro-average precision values of the classes
@@ -280,5 +304,5 @@ measure_precision_recall <- function()
   for_precision <- for_precision[(actual == predicted),]
   for_precision[, precision := N/column_total]
   #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] 
-  print(for_precision) #Reply Tweet and Retweet have precision values 0 and 0.4655489 respectively
+  print(for_precision) #Reply Tweet, Retweet and Tweet_+_Image have precision values 1.0, 0.6263966 and 0.9562044 respectively.
 }
