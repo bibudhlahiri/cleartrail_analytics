@@ -74,10 +74,7 @@ get_n_upstream_packets <- function(dt)
 get_majority_domain <- function(dt)
 {
   tt <- table(dt$DomainName)
-  ret_value <- names(tt[which.max(tt)])
-  #print(ret_value)
-  #cat(paste("class(ret_value) = ", class(ret_value), "\n", sep = ""))
-  ret_value
+  names(tt[which.max(tt)])
 }
 
 get_upstream_bytes <- function(dt)
@@ -305,4 +302,34 @@ measure_precision_recall <- function()
   for_precision[, precision := N/column_total]
   #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] 
   print(for_precision) #Reply Tweet, Retweet and Tweet_+_Image have precision values 1.0, 0.6263966 and 0.9562044 respectively.
+}
+
+temporal_aggregation <- function()
+{
+  filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("Date", "numeric", "numeric", "numeric", "character", "character", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                                   "numeric", "numeric", "numeric", "numeric", "numeric",
+                                   "numeric", "character", "character"),
+                    data.table = TRUE)
+  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", "Direction",  
+                                              "n_packets", "n_sessions", "n_flows", "n_downstream_packets", "n_upstream_packets", "majority_domain",
+                                              "upstream_bytes", "downstream_bytes", "frac_upstream_packets", "frac_downstream_packets", "avg_packets_per_session",
+                                              "avg_packets_per_flow", "Event", "predicted_event"))
+  crf_outcome <- crf_outcome[, .SD, .SDcols = c("LocalTime", "Event", "predicted_event")]
+  setkey(crf_outcome, LocalTime)
+  
+  #The actual event will be only one, hence unique() works; but predicted events may have multiple distinct values, so take the majority.
+  
+  temporal_aggregate <- crf_outcome[, list(actual_event = unique(Event), majority_predicted_event = get_majority_predicted_event(.SD)), by = LocalTime,
+                                           .SDcols=c("Event", "predicted_event")]
+  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) #0.487179
+  temporal_aggregate
+}
+
+get_majority_predicted_event <- function(dt)
+{
+  tt <- table(dt$predicted_event)
+  names(tt[which.max(tt)])
 }
