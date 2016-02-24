@@ -3,16 +3,16 @@ library(rpart)
 
 label_packets <- function()
 {
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
   revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
                     data.table = TRUE)
                     
   #Get the event corresponding to each transaction
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/Twittertestcase_10_Feb.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/Twittertestcase_10_Feb.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
@@ -51,8 +51,16 @@ label_packets <- function()
   hidden_and_vis_states[, avg_packets_per_session := n_packets/n_sessions]
   hidden_and_vis_states[, avg_packets_per_flow := n_packets/n_flows]
   
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/hidden_and_vis_states.csv"
+  #New features added on 02/24/2015
+  hidden_and_vis_states[, total_bytes := upstream_bytes + downstream_bytes]
+  hidden_and_vis_states[, frac_upstream_bytes := upstream_bytes/total_bytes]
+  hidden_and_vis_states[, frac_downstream_bytes := downstream_bytes/total_bytes]
+  hidden_and_vis_states[, avg_bytes_per_packet := total_bytes/n_packets]
+  hidden_and_vis_states[, avg_upstream_bytes_per_packet := upstream_bytes/n_packets]
+  hidden_and_vis_states[, avg_downstream_bytes_per_packet := downstream_bytes/n_packets]
+  
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/hidden_and_vis_states_ProducionTestCase2.csv"
   
   #Re-order by time before writing to CSV
   setkey(hidden_and_vis_states, LocalTime)
@@ -101,7 +109,8 @@ apply_decision_tree <- function()
   filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
   hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
-                                   "character", "numeric", "numeric", "numeric", "numeric"),
+                                   "character", "numeric", "numeric", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
                     data.table = TRUE)
   hidden_and_vis_states$Event <- as.factor(hidden_and_vis_states$Event)
                    
@@ -112,12 +121,15 @@ apply_decision_tree <- function()
   training_data <- hidden_and_vis_states[train, ]
   test_data <- hidden_and_vis_states[test, ]
   
+  print(table(training_data$Event)) #Reply Tweet (63/200 or 0.315), Retweet (80/200 or 0.4), Tweet (13/200 or 0.065) and Tweet + Image (44/200 or 0.22)
+  
   #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
   test_data <- test_data[test_data$majority_domain %in% unique(training_data$majority_domain),] 
   
   model <- rpart("Event ~ n_packets + n_sessions + n_flows + n_downstream_packets + n_upstream_packets + 
                   factor(majority_domain) + upstream_bytes + downstream_bytes + frac_upstream_packets + frac_downstream_packets + 
-                  avg_packets_per_session + avg_packets_per_flow", data = training_data)
+                  avg_packets_per_session + avg_packets_per_flow + 
+                  total_bytes + frac_upstream_bytes + frac_downstream_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet", data = training_data)
   #print(varImp(model))
   test_data[, predicted_event := as.character(predict(model, newdata = test_data, type = "class"))]
   prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
@@ -253,6 +265,9 @@ print_crf_format <- function(input_data, filename)
   sink()
 }
 
+#Current problem: too many of Reply_Tweet, Tweet and Tweet_+_Image are being mapped to Retweet, making the recall of all of these categories low. The reason for this may be the presence 
+#of too many Retweet (1794/3885 or 46%) in the test data, but same applies for Reply_Tweet (1649/3885 or 42%), too.
+
 measure_precision_recall <- function()
 {
   #Remove the blank lines after end of each session so that fread() does not halt
@@ -272,7 +287,7 @@ measure_precision_recall <- function()
   
   #Measure overall accuracy
   setkey(crf_outcome, Event, predicted_event)
-  cat(paste("Overall accuracy = ", nrow(crf_outcome[(Event == predicted_event),])/nrow(crf_outcome), "\n\n", sep = "")) #0.72459
+  cat(paste("Overall accuracy = ", nrow(crf_outcome[(Event == predicted_event),])/nrow(crf_outcome), "\n\n", sep = "")) #0.72613
   
   print(prec_recall)
   
@@ -288,7 +303,7 @@ measure_precision_recall <- function()
   for_recall[, recall := N/row_total]
   #for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
   setnames(for_recall, "actual", "Event")
-  print(for_recall) #Reply Tweet, Retweet and Tweet_+_Image have recall values 0.5360825, 1.0 and 0.5157480 respectively.
+  print(for_recall) #Reply Tweet, Retweet and Tweet_+_Image have recall values 0.539721, 1.0 and 0.5157480 respectively.
   cat("\n")
   
   #Compute the micro-average precision values of the classes
@@ -301,7 +316,8 @@ measure_precision_recall <- function()
   for_precision <- for_precision[(actual == predicted),]
   for_precision[, precision := N/column_total]
   #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] 
-  print(for_precision) #Reply Tweet, Retweet and Tweet_+_Image have precision values 1.0, 0.6263966 and 0.9562044 respectively.
+  print(for_precision) #Reply Tweet, Retweet and Tweet_+_Image have precision values 1.0, 0.6263966 and 1.0 respectively. 
+  #Tweet_+_Image reached this precision from 0.95 as we included the majority_domain for the previous and next packets also among the features for CRF.
 }
 
 temporal_aggregation <- function()
@@ -324,7 +340,7 @@ temporal_aggregation <- function()
   
   temporal_aggregate <- crf_outcome[, list(actual_event = unique(Event), majority_predicted_event = get_majority_predicted_event(.SD)), by = LocalTime,
                                            .SDcols=c("Event", "predicted_event")]
-  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) #0.487179
+  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) #0.51282
   temporal_aggregate
 }
 
