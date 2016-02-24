@@ -175,6 +175,7 @@ apply_decision_tree <- function()
 #split the packets in a single session. 
 #To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn SET2/crf_template_ct ~/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data model_ct
 #To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data
+#With same data and feature set, computation results from CRF remain same even if run multiple times: there is no random factor.
 
 prepare_packet_data_for_CRF <- function()
 {
@@ -211,7 +212,8 @@ prepare_packet_data_for_CRF <- function()
   filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
   hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
-                                   "character", "numeric", "numeric", "numeric", "numeric"),
+                                   "character", "numeric", "numeric", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
                     data.table = TRUE)
   hidden_and_vis_states[, Event := NULL]
   setkey(hidden_and_vis_states, LocalTime)
@@ -220,11 +222,10 @@ prepare_packet_data_for_CRF <- function()
     
   #Change the key back to session_id and LocalTime so that all packets for a session are printed together
   setkey(revised_packets, session_id, LocalTime)
-  #We need to retain the timestamp in the test data so that we can group by it later to get the majority vote among labeled events for a timestamp.
-  revised_packets <- revised_packets[, .SD, .SDcols = c("session_id", "LocalTime", "Tx", "Rx", "DomainName", 
-                                                        "Direction", "n_packets", "n_sessions", "n_flows", "n_downstream_packets", "n_upstream_packets", 
-                                                        "majority_domain", "upstream_bytes", "downstream_bytes", "frac_upstream_packets", "frac_downstream_packets", 
-                                                        "avg_packets_per_session", "avg_packets_per_flow", "Event")]
+  
+  #Drop columns that are not needed for modeling. We need to retain the timestamp in the test data so that we can group by it later to get the majority vote among labeled events for a timestamp.
+   
+  revised_packets[ ,`:=`(Timestamp = NULL, SourcePort = NULL, DestPort = NULL, SourceIP = NULL, DestIP = NULL, ServerIP = NULL, ClientIP = NULL, ServerPort = NULL, ClientPort = NULL, flow_id = NULL)]
   revised_packets[, Event := apply(revised_packets, 1, function(row) gsub(" ", "_", as.character(row["Event"])))]
   
   #Count the sessions and split in two
@@ -253,13 +254,16 @@ print_crf_format <- function(input_data, filename)
   {
     if (input_data[i, session_id] != curr_session_id)
     {
-      cat(paste(paste(rep(".", 18), collapse = " "), " end_of_session\n\n", sep = ""))
+      cat(paste(paste(rep(".", length(names(input_data)) - 1), collapse = " "), " end_of_session\n\n", sep = ""))
       curr_session_id <- input_data[i, session_id]
     }
     cat(paste(input_data[i, LocalTime], input_data[i, session_id], input_data[i, Tx], input_data[i, Rx], input_data[i, DomainName], input_data[i, Direction], 
               input_data[i, n_packets], input_data[i, n_sessions], input_data[i, n_flows], input_data[i, n_downstream_packets], input_data[i, n_upstream_packets], input_data[i, majority_domain], 
               input_data[i, upstream_bytes], input_data[i, downstream_bytes], input_data[i, frac_upstream_packets], input_data[i, frac_downstream_packets], input_data[i, avg_packets_per_session],
-              input_data[i, avg_packets_per_flow], input_data[i, Event], collapse = " "))
+              input_data[i, avg_packets_per_flow], 
+              input_data[i, total_bytes], input_data[i, frac_upstream_bytes], input_data[i, frac_downstream_bytes], input_data[i, avg_bytes_per_packet], 
+              input_data[i, avg_upstream_bytes_per_packet], input_data[i, avg_downstream_bytes_per_packet],
+              input_data[i, Event], collapse = " "))
     cat("\n")
   }
   sink()
@@ -274,15 +278,19 @@ measure_precision_recall <- function()
   system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data")
   filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("Date", "numeric", "numeric", "numeric", "character", "character", 
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "character",
-                                   "numeric", "numeric", "numeric", "numeric", "numeric",
-                                   "numeric", "character", "character"),
-                    data.table = TRUE)
-  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", "Direction",  
-                                              "n_packets", "n_sessions", "n_flows", "n_downstream_packets", "n_upstream_packets", "majority_domain",
-                                              "upstream_bytes", "downstream_bytes", "frac_upstream_packets", "frac_downstream_packets", "avg_packets_per_session",
-                                              "avg_packets_per_flow", "Event", "predicted_event"))
+                       colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
+                                      "character", "numeric", "numeric", "numeric", "numeric", 
+                                      "numeric", "character", "numeric", "numeric", "numeric", 
+                                      "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                      "numeric", "numeric", "numeric", "numeric", "character", 
+                                      "character"),
+                       data.table = TRUE)
+  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", 
+                                              "Direction", "n_packets", "n_sessions", "n_flows", "n_downstream_packets", 
+                                              "n_upstream_packets", "majority_domain", "upstream_bytes", "downstream_bytes", "frac_upstream_packets", 
+                                              "frac_downstream_packets", "avg_packets_per_session", "avg_packets_per_flow", "total_bytes", "frac_upstream_bytes", 
+                                              "frac_downstream_bytes", "avg_bytes_per_packet", "avg_upstream_bytes_per_packet", "avg_downstream_bytes_per_packet", "Event", 
+                                              "predicted_event"))
   prec_recall <- table(crf_outcome[, Event], crf_outcome[, predicted_event], dnn = list('actual', 'predicted'))
   
   #Measure overall accuracy
@@ -303,7 +311,7 @@ measure_precision_recall <- function()
   for_recall[, recall := N/row_total]
   #for_recall <- for_recall[, .SD, .SDcols = c("actual", "recall")]
   setnames(for_recall, "actual", "Event")
-  print(for_recall) #Reply Tweet, Retweet and Tweet_+_Image have recall values 0.539721, 1.0 and 0.5157480 respectively.
+  print(for_recall) #Reply Tweet, Retweet, Tweet and Tweet_+_Image have recall values 0.5585203, 1.0, 0.9893617 and 0.5314961 respectively.
   cat("\n")
   
   #Compute the micro-average precision values of the classes
@@ -316,7 +324,7 @@ measure_precision_recall <- function()
   for_precision <- for_precision[(actual == predicted),]
   for_precision[, precision := N/column_total]
   #for_precision <- for_precision[, .SD, .SDcols = c("predicted", "precision")] 
-  print(for_precision) #Reply Tweet, Retweet and Tweet_+_Image have precision values 1.0, 0.6263966 and 1.0 respectively. 
+  print(for_precision) #Reply Tweet, Retweet, Tweet and Tweet_+_Image have precision values 1.0, 0.6787741, 1.0 and 1.0 respectively. 
   #Tweet_+_Image reached this precision from 0.95 as we included the majority_domain for the previous and next packets also among the features for CRF.
 }
 
@@ -324,15 +332,19 @@ temporal_aggregation <- function()
 {
   filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("Date", "numeric", "numeric", "numeric", "character", "character", 
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "character",
-                                   "numeric", "numeric", "numeric", "numeric", "numeric",
-                                   "numeric", "character", "character"),
-                    data.table = TRUE)
-  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", "Direction",  
-                                              "n_packets", "n_sessions", "n_flows", "n_downstream_packets", "n_upstream_packets", "majority_domain",
-                                              "upstream_bytes", "downstream_bytes", "frac_upstream_packets", "frac_downstream_packets", "avg_packets_per_session",
-                                              "avg_packets_per_flow", "Event", "predicted_event"))
+                       colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
+                                      "character", "numeric", "numeric", "numeric", "numeric", 
+                                      "numeric", "character", "numeric", "numeric", "numeric", 
+                                      "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                      "numeric", "numeric", "numeric", "numeric", "character", 
+                                      "character"),
+                       data.table = TRUE)
+  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", 
+                                              "Direction", "n_packets", "n_sessions", "n_flows", "n_downstream_packets", 
+                                              "n_upstream_packets", "majority_domain", "upstream_bytes", "downstream_bytes", "frac_upstream_packets", 
+                                              "frac_downstream_packets", "avg_packets_per_session", "avg_packets_per_flow", "total_bytes", "frac_upstream_bytes", 
+                                              "frac_downstream_bytes", "avg_bytes_per_packet", "avg_upstream_bytes_per_packet", "avg_downstream_bytes_per_packet", "Event", 
+                                              "predicted_event"))
   crf_outcome <- crf_outcome[, .SD, .SDcols = c("LocalTime", "Event", "predicted_event")]
   setkey(crf_outcome, LocalTime)
   
@@ -340,7 +352,7 @@ temporal_aggregation <- function()
   
   temporal_aggregate <- crf_outcome[, list(actual_event = unique(Event), majority_predicted_event = get_majority_predicted_event(.SD)), by = LocalTime,
                                            .SDcols=c("Event", "predicted_event")]
-  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) #0.51282
+  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) #0.564102
   temporal_aggregate
 }
 
