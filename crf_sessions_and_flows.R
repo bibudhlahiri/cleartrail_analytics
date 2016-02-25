@@ -347,17 +347,68 @@ temporal_aggregation <- function()
                                               "predicted_event"))
   crf_outcome <- crf_outcome[, .SD, .SDcols = c("LocalTime", "Event", "predicted_event")]
   setkey(crf_outcome, LocalTime)
-  
   #The actual event will be only one, hence unique() works; but predicted events may have multiple distinct values, so take the majority.
-  
   temporal_aggregate <- crf_outcome[, list(actual_event = unique(Event), majority_predicted_event = get_majority_predicted_event(.SD)), by = LocalTime,
                                            .SDcols=c("Event", "predicted_event")]
   cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) #0.564102
-  temporal_aggregate
+  
+  #Aggregate start and end times based on temporal_aggregate
+   
+  n_temporal_aggregate <- nrow(temporal_aggregate)
+  start_end_event <- data.table(data.frame(Event = character(n_temporal_aggregate), StartTime = character(n_temporal_aggregate), EndTime = character(n_temporal_aggregate)))
+  
+  start_end_event[1, Event := temporal_aggregate[1, majority_predicted_event]]
+  start_end_event[1, StartTime := temporal_aggregate[1, LocalTime]]
+  current_event <- temporal_aggregate[1, majority_predicted_event]
+  curr_row_in_start_end_event <- 1
+  
+  for (i in 2:n_temporal_aggregate)
+  {
+     if (temporal_aggregate[i, majority_predicted_event] != current_event)
+     {
+       #Start of a new event has been encountered. End the previous event.
+        start_end_event[curr_row_in_start_end_event, EndTime := temporal_aggregate[i-1, LocalTime]]
+        curr_row_in_start_end_event <- curr_row_in_start_end_event + 1
+        start_end_event[curr_row_in_start_end_event, Event := temporal_aggregate[i, majority_predicted_event]]
+        start_end_event[curr_row_in_start_end_event, StartTime := temporal_aggregate[i, LocalTime]]
+        current_event <- temporal_aggregate[i, majority_predicted_event]
+     }
+  }
+  start_end_event[curr_row_in_start_end_event, EndTime := temporal_aggregate[n_temporal_aggregate, LocalTime]]
+  
+  #Remove the blank rows from start_end_event
+  df <- data.frame(start_end_event)
+  df <- df[!((df$Event == "") | (df$Event == "end_of_session")),]
+  start_end_event <- data.table(df)
+  
+  print(temporal_aggregate)
+  print(start_end_event)
+  plot_timeline(start_end_event)
+  start_end_event
 }
 
 get_majority_predicted_event <- function(dt)
 {
   tt <- table(dt$predicted_event)
   names(tt[which.max(tt)])
+}
+
+plot_timeline <- function(timeline_data)
+{
+  library(ggplot2)
+  timeline_data[, StartTimeSinceEpoch := as.numeric(difftime(strptime(StartTime, "%H:%M:%S"), strptime("17:00:00", "%H:%M:%S"), units = "secs"))]
+  timeline_data[, EndTimeSinceEpoch := as.numeric(difftime(strptime(EndTime, "%H:%M:%S"), strptime("17:00:00", "%H:%M:%S"), units = "secs"))]
+  timeline_data[, y_coord := numeric(.N)]
+  
+  all_times <- rbindlist(list(data.table(time = timeline_data$StartTimeSinceEpoch), data.table(time = timeline_data$EndTimeSinceEpoch)))
+  all_times[, y := numeric(.N)]
+  print(all_times)
+  
+  filename <- "./figures/timeline.png" 
+  png(filename, width = 600, height = 480, units = "px")
+  b <- ggplot(all_times, aes(time, y)) + geom_point()
+  b + geom_segment(aes(x = StartTimeSinceEpoch, y = y_coord, xend = EndTimeSinceEpoch, yend = y_coord, colour = "Event"), data = timeline_data, size = 2)
+  print(b)
+  aux <- dev.off()
+  timeline_data
 }
