@@ -3,16 +3,18 @@ library(rpart)
 
 label_packets <- function()
 {
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
   revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
                     data.table = TRUE)
                     
   #Get the event corresponding to each transaction
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/Twittertestcase_10_Feb.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
@@ -59,8 +61,9 @@ label_packets <- function()
   hidden_and_vis_states[, avg_upstream_bytes_per_packet := upstream_bytes/n_packets]
   hidden_and_vis_states[, avg_downstream_bytes_per_packet := downstream_bytes/n_packets]
   
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/hidden_and_vis_states_ProducionTestCase2.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv"
   
   #Re-order by time before writing to CSV
   setkey(hidden_and_vis_states, LocalTime)
@@ -173,13 +176,14 @@ apply_decision_tree <- function()
 #We take the packets in sessions, and look up for the events corresponding to the packets through timestamps. We group the packets in sessions as if packets are words/tokens and
 #sessions are sentences. Then, we apply CRF on the training data and fit the model on test data. We should split all the available sessions into two halves: training and testing, but should not 
 #split the packets in a single session. 
-#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn SET2/crf_template_ct ~/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data model_ct
+#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn crf_template_ct ~/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data model_ct
 #To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data
 #With same data and feature set, computation results from CRF remain same even if run multiple times: there is no random factor.
 
 prepare_packet_data_for_CRF <- function()
 {
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
   revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
@@ -188,7 +192,8 @@ prepare_packet_data_for_CRF <- function()
   revised_packets <- revised_packets[order(session_id, LocalTime),]
   
   #Get the event corresponding to each packet
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
@@ -209,7 +214,8 @@ prepare_packet_data_for_CRF <- function()
   revised_packets <- revised_packets[((nchar(Event) > 0) & (Event != "character(0)")),]
   
   #Join the timestamp-related aggregated features with the timestamps in this data to introduce additional features.
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv"
   hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
                                    "character", "numeric", "numeric", "numeric", "numeric", 
@@ -240,8 +246,10 @@ prepare_packet_data_for_CRF <- function()
   print(table(training_data$Event)) #Reply_Tweet:354, Retweet:406, Tweet:100, Tweet_+_Image:4419
   print(table(test_data$Event)) #Reply_Tweet:1649, Retweet:1794, Tweet:188, Tweet_+_Image:254
   
-  print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data")
-  print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data")
+  #print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data")
+  print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/train_ct_CRF.data")
+  #print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data")
+  print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/test_ct_CRF.data")
   revised_packets
 }
 
@@ -275,8 +283,10 @@ print_crf_format <- function(input_data, filename)
 measure_precision_recall <- function()
 {
   #Remove the blank lines after end of each session so that fread() does not halt
-  system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data")
-  filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  #system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data")
+  system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data")
+  #filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
                        colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
                                       "character", "numeric", "numeric", "numeric", "numeric", 
@@ -330,7 +340,8 @@ measure_precision_recall <- function()
 
 temporal_aggregation <- function()
 {
-  filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  #filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
                        colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
                                       "character", "numeric", "numeric", "numeric", "numeric", 

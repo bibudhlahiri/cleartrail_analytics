@@ -2,7 +2,10 @@ library(data.table)
 
 create_session_data <- function()
 {
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/PacketData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/PacketData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/PacketData_ProducionTestCase2.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Packets_DataSet_TC1.csv"
+  
   this_set <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character"),
                     data.table = TRUE)
@@ -15,20 +18,23 @@ create_session_data <- function()
   this_set[, ServerPort := apply(this_set, 1, function(row) get_server_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
   this_set[, ClientPort := apply(this_set, 1, function(row) get_client_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
   this_set[, Direction := apply(this_set, 1, function(row) get_direction(as.numeric(row["DestPort"])))]
-  #this_set[, RawPacketID := 1:nrow(this_set)]
-  
+    
   #Distribution of domain: *.twimg.com is 11010/17399 (63.2%), upload.twitter.com is 4506/17399 (25.89%), twitter.com is 1641/17399 (9.43%), pbs.twimg.com is 154/17399 (0.88%).	
   
   setkey(this_set, ServerIP, ServerPort, ClientIP, ClientPort)
-  #80 sessions for 17,399 packets
   sessions <- this_set[, list(start_time = min(LocalTime), end_time = max(LocalTime), n_packets = length(LocalTime)), by = list(ServerIP, ServerPort, ClientIP, ClientPort)] 
   sessions$duration <- as.numeric(difftime(strptime(sessions$end_time, "%H:%M:%S"), strptime(sessions$start_time, "%H:%M:%S"), units = "secs"))
   sessions[, session_id := 1:nrow(sessions)]
   revised_packet_data <- create_flow_data(this_set, sessions)
   
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/SessionData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/SessionData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/SessionData_ProducionTestCase2.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/SessionData_23_Feb_2016_TC1.csv"
   write.table(sessions, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
   write.table(revised_packet_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
 }
  
@@ -62,10 +68,10 @@ create_flow_data <- function(packets, sessions)
     direction <- packets_this_session[1, Direction]
     current_flow_id <- 1
     packets_this_session[, session_id := numeric(.N)]
-    packets_this_session[, flow_id := numeric(.N)]
+    packets_this_session[, flow_id := character(.N)]
     
     packets_this_session[1, session_id := sessions[i, session_id]]
-    packets_this_session[1, flow_id := current_flow_id]
+    packets_this_session[1, flow_id := paste(sessions[i, session_id], "_", current_flow_id, sep = "")]
     
     if (n_packets_this_session > 1)
     {
@@ -78,7 +84,7 @@ create_flow_data <- function(packets, sessions)
           current_flow_id <- current_flow_id + 1
         }
         packets_this_session[j, session_id := sessions[i, session_id]]
-        packets_this_session[j, flow_id := current_flow_id]
+        packets_this_session[j, flow_id := paste(sessions[i, session_id], "_", current_flow_id, sep = "")]
       }
     }
     revised_packet_data <- rbindlist(list(revised_packet_data, packets_this_session))
@@ -120,29 +126,4 @@ get_direction <- function(DestPort)
   if (DestPort == 443)  #Packet from client to server
     return("upstream")
   return("downstream")
-}
-
-look_up_activity <- function(look_up_for, activity_times)
-{
-  activity_times[, match_for := rep(look_up_for, nrow(activity_times))]
-  activity_times$abs_diff <- abs(as.numeric(difftime(strptime(activity_times$EndTime, "%H:%M:%S"), strptime(activity_times$match_for, "%H:%M:%S"), units = "secs")))
-  activity_times <- activity_times[order(abs_diff),]
-  cat(paste("look_up_for = ", look_up_for, ", closest match = ", activity_times[1, EndTime], ", abs_diff = ", activity_times[1, abs_diff], "\n", sep = ""))
-  activity_times[1, Event]
-}
-
-label_sessions <- function()
-{
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/SessionData_DevQA_TestCase1.csv"
-  sessions <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("character", "numeric", "character", "numeric", "Date", "Date", "numeric", "numeric", "numeric"),
-                    data.table = TRUE)
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
-  activity_times <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("character", "Date", "Date"),
-                    data.table = TRUE)
-  sessions[, Event := apply(sessions, 1, function(row)look_up_activity(as.character(row["end_time"]), activity_times))]
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/SessionData_DevQA_TestCase1.csv"
-  write.table(sessions, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  sessions
 }
