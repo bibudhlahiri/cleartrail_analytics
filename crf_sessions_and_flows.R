@@ -383,7 +383,6 @@ temporal_aggregation <- function()
   
   print(temporal_aggregate)
   print(start_end_event)
-  plot_timeline(start_end_event)
   start_end_event
 }
 
@@ -391,24 +390,4 @@ get_majority_predicted_event <- function(dt)
 {
   tt <- table(dt$predicted_event)
   names(tt[which.max(tt)])
-}
-
-plot_timeline <- function(timeline_data)
-{
-  library(ggplot2)
-  timeline_data[, StartTimeSinceEpoch := as.numeric(difftime(strptime(StartTime, "%H:%M:%S"), strptime("17:00:00", "%H:%M:%S"), units = "secs"))]
-  timeline_data[, EndTimeSinceEpoch := as.numeric(difftime(strptime(EndTime, "%H:%M:%S"), strptime("17:00:00", "%H:%M:%S"), units = "secs"))]
-  timeline_data[, y_coord := numeric(.N)]
-  
-  all_times <- rbindlist(list(data.table(time = timeline_data$StartTimeSinceEpoch), data.table(time = timeline_data$EndTimeSinceEpoch)))
-  all_times[, y := numeric(.N)]
-  print(all_times)
-  
-  filename <- "./figures/timeline.png" 
-  png(filename, width = 600, height = 480, units = "px")
-  b <- ggplot(all_times, aes(time, y)) + geom_point()
-  b + geom_segment(aes(x = StartTimeSinceEpoch, y = y_coord, xend = EndTimeSinceEpoch, yend = y_coord, colour = "Event"), data = timeline_data, size = 2)
-  print(b)
-  aux <- dev.off()
-  timeline_data
 }
