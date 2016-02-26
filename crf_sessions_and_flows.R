@@ -172,6 +172,67 @@ apply_decision_tree <- function()
   model
 }
 
+#Take the timestamp-aggregated data and try to detect which ones among the timestamps indicate end of events.
+detect_endtimes <- function()
+{
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
+  hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
+                                   "character", "numeric", "numeric", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
+                    data.table = TRUE)
+  
+  #Take the timestamps from the event data that indicate ends of events. If they are found in hidden_and_vis_states, mark them; if not, mark the timestamp that comes closest. Break ties arbitrarily.
+  
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
+  events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("character", "Date", "Date"),
+                    data.table = TRUE)
+  events[, StartTime := strftime(strptime(events$StartTime, "%H:%M:%S"), "%H:%M:%S")]
+  events[, EndTime := strftime(strptime(events$EndTime, "%H:%M:%S"), "%H:%M:%S")]
+  events[, MatchingPacketTimestamp := apply(events, 1, function(row) get_matching_timestamp(as.character(row["EndTime"]), hidden_and_vis_states))]
+  
+  #Take the matched timestamps and mark them in hidden_and_vis_states
+  hidden_and_vis_states[(LocalTime %in% events$MatchingPacketTimestamp), end_of_event := TRUE]
+  hidden_and_vis_states[(is.na(end_of_event)), end_of_event := FALSE]
+  hidden_and_vis_states$end_of_event <- as.factor(hidden_and_vis_states$end_of_event)
+  
+  #Apply classification model on end_of_event
+  train = sample(1:nrow(hidden_and_vis_states), 0.7*nrow(hidden_and_vis_states))
+  test = (-train)
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(hidden_and_vis_states) - length(train)), "\n", sep = ""))
+  
+  training_data <- hidden_and_vis_states[train, ]
+  test_data <- hidden_and_vis_states[test, ]
+  
+  #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
+  test_data <- test_data[test_data$majority_domain %in% unique(training_data$majority_domain),]
+  
+  print(table(training_data$end_of_event)) 
+  print(table(test_data$end_of_event))
+  
+  model <- rpart("end_of_event ~ n_packets + n_sessions + n_flows + n_downstream_packets + n_upstream_packets + 
+                  factor(majority_domain) + upstream_bytes + downstream_bytes + factor(Event) + frac_upstream_packets + frac_downstream_packets + 
+                  avg_packets_per_session + avg_packets_per_flow + 
+                  total_bytes + frac_upstream_bytes + frac_downstream_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet", data = training_data)
+  
+  test_data[, predicted_end_of_event := as.character(predict(model, newdata = test_data, type = "class"))]
+  prec_recall <- table(test_data[, end_of_event], test_data[, predicted_end_of_event], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  setkey(test_data, end_of_event, predicted_end_of_event)
+  cat(paste("Overall accuracy = ", nrow(test_data[(end_of_event == predicted_end_of_event),])/nrow(test_data), "\n\n", sep = ""))
+  hidden_and_vis_states
+}
+
+get_matching_timestamp <- function(end_time, hidden_and_vis_states)
+{
+  hidden_and_vis_states$difference <- abs(as.numeric(difftime(strptime(hidden_and_vis_states$LocalTime, "%H:%M:%S"), strptime(end_time, "%H:%M:%S"), units = "secs")))
+  setkey(hidden_and_vis_states, difference)
+  hidden_and_vis_states <- hidden_and_vis_states[order(difference),]
+  hidden_and_vis_states[1, LocalTime]
+}
 
 #We take the packets in sessions, and look up for the events corresponding to the packets through timestamps. We group the packets in sessions as if packets are words/tokens and
 #sessions are sentences. Then, we apply CRF on the training data and fit the model on test data. We should split all the available sessions into two halves: training and testing, but should not 
