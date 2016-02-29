@@ -203,6 +203,7 @@ detect_endtimes <- function()
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(hidden_and_vis_states) - length(train)), "\n", sep = ""))
   
   training_data <- hidden_and_vis_states[train, ]
+  training_data <- create_bs_by_over_and_undersampling(training_data)
   test_data <- hidden_and_vis_states[test, ]
   
   #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
@@ -211,8 +212,9 @@ detect_endtimes <- function()
   print(table(training_data$end_of_event)) 
   print(table(test_data$end_of_event))
   
+  #Note: Event cannot be kept as a predictor as it would not be available in real data
   model <- rpart("end_of_event ~ n_packets + n_sessions + n_flows + n_downstream_packets + n_upstream_packets + 
-                  factor(majority_domain) + upstream_bytes + downstream_bytes + factor(Event) + frac_upstream_packets + frac_downstream_packets + 
+                  factor(majority_domain) + upstream_bytes + downstream_bytes + frac_upstream_packets + frac_downstream_packets + 
                   avg_packets_per_session + avg_packets_per_flow + 
                   total_bytes + frac_upstream_bytes + frac_downstream_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet", data = training_data)
   
@@ -222,8 +224,20 @@ detect_endtimes <- function()
   
   #Measure overall accuracy
   setkey(test_data, end_of_event, predicted_end_of_event)
-  cat(paste("Overall accuracy = ", nrow(test_data[(end_of_event == predicted_end_of_event),])/nrow(test_data), "\n\n", sep = ""))
-  hidden_and_vis_states
+  cat(paste("Overall accuracy = ", nrow(test_data[(end_of_event == predicted_end_of_event),])/nrow(test_data), 
+            ", recall = ", prec_recall[2,2]/sum(prec_recall[2,]), 
+            ", precision = ", prec_recall[2,2]/sum(prec_recall[,2]), "\n\n", sep = "")) #0.790697674418
+  #The end_of_events can be identified with recall of 0.875 and precision of 0.2916667
+  
+  #Take the test data points and plug back in the predicted values of end_of_event
+  test_data <- test_data[, .SD, .SDcols = c("LocalTime", "predicted_end_of_event")]
+  setkey(test_data, LocalTime)
+  setkey(hidden_and_vis_states, LocalTime)
+  #Left outer join between hidden_and_vis_states and test_data is done by right outer join between test_data and hidden_and_vis_states
+  hidden_and_vis_states <- test_data[hidden_and_vis_states, nomatch = NA]
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_with_eoe_DevQA_TestCase1.csv"
+  write.table(hidden_and_vis_states, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  model
 }
 
 get_matching_timestamp <- function(end_time, hidden_and_vis_states)
@@ -232,6 +246,34 @@ get_matching_timestamp <- function(end_time, hidden_and_vis_states)
   setkey(hidden_and_vis_states, difference)
   hidden_and_vis_states <- hidden_and_vis_states[order(difference),]
   hidden_and_vis_states[1, LocalTime]
+}
+ 
+create_bs_by_over_and_undersampling <- function(df)
+{
+  set.seed(1)
+  n_df <- nrow(df)
+  size_each_part <- n_df/2
+
+  majority_set <- df[(end_of_event == FALSE),]
+  n_majority <- nrow(majority_set)
+  cat(paste("n_majority = ", n_majority, ", n_df = ", n_df, ", size_each_part = ", size_each_part, "\n", sep = ""))
+  sample_majority_ind <- sample(1:n_majority, size_each_part, replace = FALSE)
+  sample_majority <- majority_set[sample_majority_ind, ]
+    
+  minority_set <- df[(end_of_event == TRUE),]
+  n_minority <- nrow(minority_set)
+  rep_times <- size_each_part%/%nrow(minority_set)
+  oversampled_minority_set <- minority_set
+  for (i in 1:(rep_times - 1))
+  {
+    oversampled_minority_set <- rbindlist(list(oversampled_minority_set, minority_set))
+  }
+  rem_sample_id <- sample(1:n_minority, size_each_part%%nrow(minority_set), replace = FALSE)
+  rem_sample <- minority_set[rem_sample_id, ]
+  oversampled_minority_set <- rbindlist(list(oversampled_minority_set, rem_sample))
+
+  bal_df <- rbindlist(list(sample_majority, oversampled_minority_set))
+  return(bal_df)
 }
 
 #We take the packets in sessions, and look up for the events corresponding to the packets through timestamps. We group the packets in sessions as if packets are words/tokens and
