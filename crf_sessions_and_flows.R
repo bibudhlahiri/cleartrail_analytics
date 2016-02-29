@@ -5,7 +5,8 @@ label_packets <- function()
 {
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv"
   revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
@@ -14,7 +15,8 @@ label_packets <- function()
   #Get the event corresponding to each transaction
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/Twittertestcase_10_Feb.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
@@ -63,7 +65,8 @@ label_packets <- function()
   
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/hidden_and_vis_states_ProducionTestCase2.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv"
   
   #Re-order by time before writing to CSV
   setkey(hidden_and_vis_states, LocalTime)
@@ -276,18 +279,9 @@ create_bs_by_over_and_undersampling <- function(df)
   return(bal_df)
 }
 
-#We take the packets in sessions, and look up for the events corresponding to the packets through timestamps. We group the packets in sessions as if packets are words/tokens and
-#sessions are sentences. Then, we apply CRF on the training data and fit the model on test data. We should split all the available sessions into two halves: training and testing, but should not 
-#split the packets in a single session. 
-#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn crf_template_ct ~/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data model_ct
-#To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data
-#With same data and feature set, computation results from CRF remain same even if run multiple times: there is no random factor.
-
-prepare_packet_data_for_CRF <- function()
+prepare_packet_data_for_CRF <- function(revised_pkt_data_file, events_file, hidden_and_vis_states_file)
 {
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
-  revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  revised_packets <- fread(revised_pkt_data_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
                     data.table = TRUE)
@@ -295,9 +289,7 @@ prepare_packet_data_for_CRF <- function()
   revised_packets <- revised_packets[order(session_id, LocalTime),]
   
   #Get the event corresponding to each packet
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
-  events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  events <- fread(events_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
   events[, StartTime := strftime(strptime(events$StartTime, "%H:%M:%S"), "%H:%M:%S")]
@@ -317,9 +309,7 @@ prepare_packet_data_for_CRF <- function()
   revised_packets <- revised_packets[((nchar(Event) > 0) & (Event != "character(0)")),]
   
   #Join the timestamp-related aggregated features with the timestamps in this data to introduce additional features.
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv"
-  hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  hidden_and_vis_states <- fread(hidden_and_vis_states_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
                                    "character", "numeric", "numeric", "numeric", "numeric", 
                                    "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
@@ -336,6 +326,21 @@ prepare_packet_data_for_CRF <- function()
    
   revised_packets[ ,`:=`(Timestamp = NULL, SourcePort = NULL, DestPort = NULL, SourceIP = NULL, DestIP = NULL, ServerIP = NULL, ClientIP = NULL, ServerPort = NULL, ClientPort = NULL, flow_id = NULL)]
   revised_packets[, Event := apply(revised_packets, 1, function(row) gsub(" ", "_", as.character(row["Event"])))]
+  revised_packets
+}
+
+#We take the packets in sessions, and look up for the events corresponding to the packets through timestamps. We group the packets in sessions as if packets are words/tokens and
+#sessions are sentences. Then, we apply CRF on the training data and fit the model on test data. We should split all the available sessions into two halves: training and testing, but should not 
+#split the packets in a single session. 
+#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn crf_template_ct ~/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data model_ct
+#To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data
+#With same data and feature set, computation results from CRF remain same even if run multiple times: there is no random factor.
+
+prepare_packet_data_for_CRF_from_single_file <- function()
+{
+  revised_packets <- prepare_packet_data_for_CRF("/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv", 
+                                                 "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv",
+                                                 "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv")
   
   #Count the sessions and split in two
   n_sessions <- max(revised_packets$session_id)
@@ -349,11 +354,30 @@ prepare_packet_data_for_CRF <- function()
   print(table(training_data$Event)) #Reply_Tweet:354, Retweet:406, Tweet:100, Tweet_+_Image:4419
   print(table(test_data$Event)) #Reply_Tweet:1649, Retweet:1794, Tweet:188, Tweet_+_Image:254
   
-  #print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data")
-  print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/train_ct_CRF.data")
-  #print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data")
-  print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/test_ct_CRF.data")
+  print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/train_ct_CRF.data")
+  print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET2/test_ct_CRF.data")
   revised_packets
+}
+
+#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn crf_template_ct ~/cleartrail_osn/for_CRF/SET3/TC1and2/train_ct_CRF.data model_ct
+#To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/SET3/TC1and2/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data
+
+prepare_packet_data_for_CRF_from_separate_files <- function()
+{
+  training_data <- prepare_packet_data_for_CRF("/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv", 
+                                                 "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv",
+                                                 "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv")
+  test_data <- prepare_packet_data_for_CRF("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
+                                                 "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
+                                                 "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv")
+  
+  cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
+  
+  print(table(training_data$Event)) #Reply_Tweet_Text_and_Image:3550, Reply_Tweet_Text_Only:344, ReTweet:579, Tweet_Only:595, Tweet+Image:2939, Uploading_Image:2525, User_Login:272, User_mouse_wheel_down:116
+  print(table(test_data$Event)) #Reply_Tweet_Text_and_Image:5900, Reply_Tweet_Text_Only:269, ReTweet:816, Tweet_Only:673, Tweet+Image:3326, User_Login:1852, User_mouse_wheel_down:3272
+  
+  print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1and2/train_ct_CRF.data")
+  print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1and2/test_ct_CRF.data")
 }
 
 print_crf_format <- function(input_data, filename)
