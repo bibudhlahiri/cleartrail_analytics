@@ -443,8 +443,8 @@ measure_precision_recall <- function()
 
 temporal_aggregation <- function()
 {
-  #filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
-  filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
+  filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  #filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
                        colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
                                       "character", "numeric", "numeric", "numeric", "numeric", 
@@ -497,7 +497,60 @@ temporal_aggregation <- function()
   
   print(temporal_aggregate)
   print(start_end_event)
-  start_end_event
+  
+  #Get the predicted ends of events and merge them with start_end_event.
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_with_eoe_DevQA_TestCase1.csv"
+  hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("Date", "character", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
+                                   "character", "numeric", "numeric", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "character"),
+                    data.table = TRUE)
+  hidden_and_vis_states[, .SD, .SDcols = c("LocalTime", "predicted_end_of_event")]
+  setkey(hidden_and_vis_states, predicted_end_of_event)
+  predicted_end_times <- hidden_and_vis_states[(predicted_end_of_event == TRUE),]
+  n_predicted_end_times <- nrow(predicted_end_times)
+  #for (i in 1:n_predicted_end_times)
+  for (i in 1:1)
+  {
+     end_time_to_place <- predicted_end_times[i, LocalTime]
+     cat(paste("end_time_to_place = ", end_time_to_place, ", class(end_time_to_place) = ", class(end_time_to_place), "\n", sep = ""))
+     #If there is an end time already in start_end_event which matches with end_time_to_place, then no need to do anything more.
+     setkey(start_end_event, EndTime)
+     row_with_matching_end_time <- start_end_event[(EndTime == end_time_to_place),]
+     if (nrow(row_with_matching_end_time) == 0)
+     {
+       cat("Entered if\n")
+       #Check if there is a row in start_end_event where end_time_to_place falls in that interval
+       n_start_end_event <- nrow(start_end_event)
+       for (j in 1:n_start_end_event)
+       {
+         if ((as.character(start_end_event[j, StartTime]) <= end_time_to_place) & (as.character(start_end_event[j, EndTime]) > end_time_to_place))
+         {
+           break #only one match needed for j
+         } #end if 
+       } #end for (j in 1:n_start_end_event)
+       cat(paste("j = ", j, ", n_start_end_event = ", n_start_end_event, ", j+1 = ", j+1, "\n", sep = ""))
+       
+       #Add a junk row at end before we start pushing down.
+       start_end_event <- rbind(start_end_event, list("", "", ""))
+       #Push down everything from (j+1)-th row to end of start_end_event as we are going to split the j-th event into two events. Run the loop starting from end.
+       
+       for (k in n_start_end_event:(j+1))
+       {
+          cat(paste("k = ", k, "\n", sep = ""))
+          start_end_event[k + 1, Event := start_end_event[k, Event]]
+          start_end_event[k + 1, StartTime := start_end_event[k, StartTime]]
+          start_end_event[k + 1, EndTime := start_end_event[k, EndTime]]
+       }
+       start_end_event[j + 1, Event := start_end_event[j, Event]]
+       #start_end_event[j + 1, StartTime := end_time_to_place] #Add 1 second here
+       start_end_event[j + 1, StartTime := strftime(strptime(end_time_to_place, "%H:%M:%S") + 1, "%H:%M:%S")]
+       start_end_event[j + 1, EndTime := start_end_event[j, EndTime]]
+           
+       start_end_event[j, EndTime := end_time_to_place]
+     } #end if (nrow(row_with_matching_end_time) == 0)
+  } #end for (i in 1:n_predicted_end_times)
+  print(start_end_event)
 }
 
 get_majority_predicted_event <- function(dt)
