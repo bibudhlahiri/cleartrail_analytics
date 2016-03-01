@@ -540,24 +540,14 @@ temporal_aggregation <- function()
   start_end_event[curr_row_in_start_end_event, EndTime := temporal_aggregate[n_temporal_aggregate, LocalTime]]
   
   #Remove the blank rows from start_end_event
-  #df <- data.frame(start_end_event)
-  #df <- df[!((df$Event == "") | (df$Event == "end_of_session")),]
-  #start_end_event <- data.table(df)
-  
   start_end_event <- data.frame(start_end_event)
   start_end_event <- start_end_event[!((start_end_event$Event == "") | (start_end_event$Event == "end_of_session")),]
   rownames(start_end_event) <- NULL #Adjust row numbers after deletion
   
+  #Default type was factor for the columns and that was creating problem in updating
   start_end_event$Event <- as.character(start_end_event$Event)
   start_end_event$StartTime <- as.character(start_end_event$StartTime)
   start_end_event$EndTime <- as.character(start_end_event$EndTime)
-  
-  cat(paste("class(start_end_event$Event) = ", class(start_end_event$Event), 
-            ", class(start_end_event$StartTime) = ", class(start_end_event$StartTime), 
-            ", class(start_end_event$EndTime) = ", class(start_end_event$EndTime), "\n", sep = ""))
-  
-  print(temporal_aggregate)
-  print(start_end_event)
   
   #Get the predicted ends of events and merge them with start_end_event.
   #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_with_eoe_DevQA_TestCase1.csv"
@@ -573,13 +563,9 @@ temporal_aggregation <- function()
   #start_end_event <- data.frame(start_end_event)
   
   for (i in 1:n_predicted_end_times)
-  #for (i in 1:2)
   {
-     cat(paste("start_end_event before insertion, nrow(start_end_event) = ", nrow(start_end_event), "\n", sep = ""))
-     print(start_end_event)
      end_time_to_place <- predicted_end_times[i, LocalTime]
-     cat(paste("end_time_to_place = ", end_time_to_place, "\n", sep = ""))
-     
+          
      #If there is an end time already in start_end_event which matches with end_time_to_place, then no need to do anything more.
      row_with_matching_end_time <- subset(start_end_event, (EndTime == end_time_to_place))
      
@@ -590,17 +576,14 @@ temporal_aggregation <- function()
      {
        #Check if there is a row in start_end_event where end_time_to_place falls in that interval
        n_start_end_event <- nrow(start_end_event)
-       cat(paste("n_start_end_event before starting loop with j = ", n_start_end_event, "\n", sep = ""))
        for (j in 1:n_start_end_event)
        {
-         cat(paste("j = ", j, ", start_end_event[j, StartTime] = ", start_end_event[j, "StartTime"], ", start_end_event[j, EndTime] = ", start_end_event[j, "EndTime"], "\n", sep = ""))
          if ((as.character(start_end_event[j, "StartTime"]) <= end_time_to_place) & (as.character(start_end_event[j, "EndTime"]) > end_time_to_place))
          {
            break #only one match needed for j
          } #end if 
        } #end for (j in 1:n_start_end_event)
-       cat(paste("j = ", j, ", n_start_end_event = ", n_start_end_event, ", j + 1 = ", j+1, "\n", sep = ""))
-       
+             
        #Before inserting end_time_to_place, check if it is less than the EndTime of the last Event.
        if (end_time_to_place < as.character(start_end_event[n_start_end_event, "EndTime"]))
        {
@@ -617,21 +600,13 @@ temporal_aggregation <- function()
            start_end_event[k + 1, "EndTime"] <- start_end_event[k, "EndTime"]
          }
          start_end_event[j + 1, "Event"] <- start_end_event[j, "Event"]
-         cat(paste("end_time_to_place = ", end_time_to_place, ", class(end_time_to_place) = ", class(end_time_to_place), "\n", sep = ""))
-         end_time_plus_one <- strftime(strptime(as.character(end_time_to_place), "%H:%M:%S") + 1, "%H:%M:%S")
-         cat(paste("end_time_plus_one = ", end_time_plus_one, ", class(end_time_plus_one) = ", class(end_time_plus_one), "\n", sep = ""))
-         #start_end_event[j + 1, "StartTime"] <- end_time_plus_one
-         start_end_event[j + 1, 2] = end_time_plus_one
+         start_end_event[j + 1, "StartTime"] <- strftime(strptime(as.character(end_time_to_place), "%H:%M:%S") + 1, "%H:%M:%S")
          start_end_event[j + 1, "EndTime"] <- start_end_event[j, "EndTime"]
-         #start_end_event[j, "EndTime"] <- as.character(end_time_to_place)
-         start_end_event[j, 3] = as.character(end_time_to_place)
+         start_end_event[j, "EndTime"] <- end_time_to_place
        }
      } #end if (nrow(row_with_matching_end_time) == 0)
-     
-     cat(paste("start_end_event after insertion, nrow(start_end_event) = ", nrow(start_end_event), "\n", sep = ""))
-     print(start_end_event)
   } #end for (i in 1:n_predicted_end_times)
-  
+  print(start_end_event)
 }
 
 get_majority_predicted_event <- function(dt)
