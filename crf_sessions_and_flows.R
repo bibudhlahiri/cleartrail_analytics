@@ -490,8 +490,9 @@ measure_precision_recall <- function()
 
 temporal_aggregation <- function()
 {
-  filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
+  #filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
   #filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
+  filename <- "~/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
                        colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
                                       "character", "numeric", "numeric", "numeric", "numeric", 
@@ -546,29 +547,39 @@ temporal_aggregation <- function()
   print(start_end_event)
   
   #Get the predicted ends of events and merge them with start_end_event.
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_with_eoe_DevQA_TestCase1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_with_eoe_DevQA_TestCase1.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_with_eoe_23_Feb_2016_Set_II.csv"
   hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("Date", "character", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
-                                   "character", "numeric", "numeric", "numeric", "numeric", 
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "character"),
+                    colClasses = c("Date", "character", "character", "character"),
                     data.table = TRUE)
   hidden_and_vis_states[, .SD, .SDcols = c("LocalTime", "predicted_end_of_event")]
   setkey(hidden_and_vis_states, predicted_end_of_event)
   predicted_end_times <- hidden_and_vis_states[(predicted_end_of_event == TRUE),]
   n_predicted_end_times <- nrow(predicted_end_times)
-  for (i in 1:n_predicted_end_times)
+  #for (i in 1:n_predicted_end_times)
+  for (i in 1:2)
   {
+     cat(paste("start_end_event before insertion, nrow(start_end_event) = ", nrow(start_end_event), "\n", sep = ""))
+     print(start_end_event)
      end_time_to_place <- predicted_end_times[i, LocalTime]
      cat(paste("end_time_to_place = ", end_time_to_place, "\n", sep = ""))
+     
      #If there is an end time already in start_end_event which matches with end_time_to_place, then no need to do anything more.
      setkey(start_end_event, EndTime)
      row_with_matching_end_time <- start_end_event[(EndTime == end_time_to_place),]
+     
+     #Restore the order by StartTime
+     setkey(start_end_event, StartTime)
+     start_end_event <- start_end_event[order(StartTime),]
+     
      if (nrow(row_with_matching_end_time) == 0)
      {
        #Check if there is a row in start_end_event where end_time_to_place falls in that interval
        n_start_end_event <- nrow(start_end_event)
+       cat(paste("n_start_end_event before starting loop with j = ", n_start_end_event, "\n", sep = ""))
        for (j in 1:n_start_end_event)
        {
+         cat(paste("j = ", j, ", start_end_event[j, StartTime] = ", start_end_event[j, StartTime], ", start_end_event[j, EndTime] = ", start_end_event[j, EndTime], "\n", sep = ""))
          if ((as.character(start_end_event[j, StartTime]) <= end_time_to_place) & (as.character(start_end_event[j, EndTime]) > end_time_to_place))
          {
            break #only one match needed for j
@@ -595,6 +606,8 @@ temporal_aggregation <- function()
          start_end_event[j, EndTime := end_time_to_place]
        }
      } #end if (nrow(row_with_matching_end_time) == 0)
+     
+     cat(paste("start_end_event after insertion, nrow(start_end_event) = ", nrow(start_end_event), "\n", sep = ""))
      print(start_end_event)
   } #end for (i in 1:n_predicted_end_times)
   
