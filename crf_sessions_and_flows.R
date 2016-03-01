@@ -175,11 +175,10 @@ apply_decision_tree <- function()
   model
 }
 
-#Take the timestamp-aggregated data and try to detect which ones among the timestamps indicate end of events.
-detect_endtimes <- function()
+
+prepare_data_for_detecting_endtimes <- function(hidden_and_vis_states_file, events_file)
 {
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
-  hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  hidden_and_vis_states <- fread(hidden_and_vis_states_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
                                    "character", "numeric", "numeric", "numeric", "numeric", 
                                    "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
@@ -187,8 +186,7 @@ detect_endtimes <- function()
   
   #Take the timestamps from the event data that indicate ends of events. If they are found in hidden_and_vis_states, mark them; if not, mark the timestamp that comes closest. Break ties arbitrarily.
   
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
-  events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  events <- fread(events_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
   events[, StartTime := strftime(strptime(events$StartTime, "%H:%M:%S"), "%H:%M:%S")]
@@ -199,16 +197,12 @@ detect_endtimes <- function()
   hidden_and_vis_states[(LocalTime %in% events$MatchingPacketTimestamp), end_of_event := TRUE]
   hidden_and_vis_states[(is.na(end_of_event)), end_of_event := FALSE]
   hidden_and_vis_states$end_of_event <- as.factor(hidden_and_vis_states$end_of_event)
-  
-  #Apply classification model on end_of_event
-  train = sample(1:nrow(hidden_and_vis_states), 0.7*nrow(hidden_and_vis_states))
-  test = (-train)
-  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(hidden_and_vis_states) - length(train)), "\n", sep = ""))
-  
-  training_data <- hidden_and_vis_states[train, ]
-  training_data <- create_bs_by_over_and_undersampling(training_data)
-  test_data <- hidden_and_vis_states[test, ]
-  
+  hidden_and_vis_states
+}
+
+
+detect_endtimes <- function(training_data, test_data, hidden_and_vis_states_with_eoe_file)
+{
   #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
   test_data <- test_data[test_data$majority_domain %in% unique(training_data$majority_domain),]
   
@@ -232,16 +226,42 @@ detect_endtimes <- function()
             ", precision = ", prec_recall[2,2]/sum(prec_recall[,2]), "\n\n", sep = "")) #0.790697674418
   #The end_of_events can be identified with recall of 0.875 and precision of 0.2916667
   
-  #Take the test data points and plug back in the predicted values of end_of_event
-  test_data <- test_data[, .SD, .SDcols = c("LocalTime", "predicted_end_of_event")]
-  setkey(test_data, LocalTime)
-  setkey(hidden_and_vis_states, LocalTime)
-  #Left outer join between hidden_and_vis_states and test_data is done by right outer join between test_data and hidden_and_vis_states
-  hidden_and_vis_states <- test_data[hidden_and_vis_states, nomatch = NA]
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_with_eoe_DevQA_TestCase1.csv"
-  write.table(hidden_and_vis_states, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  #Write the test data back with the predicted values of end_of_event. No need to write the data points that come from training data because predicted_end_of_event will be NA for them.
+  test_data <- test_data[, .SD, .SDcols = c("LocalTime", "Event", "end_of_event", "predicted_end_of_event")]
+  write.table(test_data, hidden_and_vis_states_with_eoe_file, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
   model
 }
+
+
+#Take the timestamp-aggregated data and try to detect which ones among the timestamps indicate end of events.
+detect_endtimes_from_single_file <- function()
+{
+  hidden_and_vis_states <- prepare_data_for_detecting_endtimes("/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv",
+                                                               "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv")
+  #Apply classification model on end_of_event
+  train = sample(1:nrow(hidden_and_vis_states), 0.7*nrow(hidden_and_vis_states))
+  test = (-train)
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(hidden_and_vis_states) - length(train)), "\n", sep = ""))
+  
+  training_data <- hidden_and_vis_states[train, ]
+  training_data <- create_bs_by_over_and_undersampling(training_data)
+  test_data <- hidden_and_vis_states[test, ]
+  
+  model <- detect_endtimes(training_data, test_data, "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_with_eoe_DevQA_TestCase1.csv")
+}
+
+
+detect_endtimes_from_separate_files <- function()
+{
+  training_data <- prepare_data_for_detecting_endtimes("/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv",
+                                                       "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv")
+  training_data <- create_bs_by_over_and_undersampling(training_data)
+  test_data <- prepare_data_for_detecting_endtimes("/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv", 
+                                                 "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv")
+  model <- detect_endtimes(training_data, test_data, "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_with_eoe_23_Feb_2016_Set_II.csv")
+  #Overall accuracy = 0.8378, recall = 0.147, precision = 0.278
+}
+
 
 get_matching_timestamp <- function(end_time, hidden_and_vis_states)
 {
@@ -411,9 +431,12 @@ measure_precision_recall <- function()
 {
   #Remove the blank lines after end of each session so that fread() does not halt
   #system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data")
-  system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data")
+  #system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data")
+  system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data")
+  
   #filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
-  filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
+  #filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
+  filename <- "~/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
                        colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
                                       "character", "numeric", "numeric", "numeric", "numeric", 
