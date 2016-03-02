@@ -1,5 +1,6 @@
 library(data.table)
 library(rpart)
+library(e1071)
 
 label_packets <- function()
 {
@@ -110,71 +111,6 @@ lookup_event <- function(LocalTime, events)
   matching_row[, Event]
 }
 
-apply_decision_tree <- function()
-{
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
-  hidden_and_vis_states <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
-                                   "character", "numeric", "numeric", "numeric", "numeric", 
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
-                    data.table = TRUE)
-  hidden_and_vis_states$Event <- as.factor(hidden_and_vis_states$Event)
-                   
-  train = sample(1:nrow(hidden_and_vis_states), 0.7*nrow(hidden_and_vis_states))
-  test = (-train)
-  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(hidden_and_vis_states) - length(train)), "\n", sep = ""))
-  
-  training_data <- hidden_and_vis_states[train, ]
-  test_data <- hidden_and_vis_states[test, ]
-  
-  print(table(training_data$Event)) #Reply Tweet (63/200 or 0.315), Retweet (80/200 or 0.4), Tweet (13/200 or 0.065) and Tweet + Image (44/200 or 0.22)
-  
-  #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
-  test_data <- test_data[test_data$majority_domain %in% unique(training_data$majority_domain),] 
-  
-  model <- rpart("Event ~ n_packets + n_sessions + n_flows + n_downstream_packets + n_upstream_packets + 
-                  factor(majority_domain) + upstream_bytes + downstream_bytes + frac_upstream_packets + frac_downstream_packets + 
-                  avg_packets_per_session + avg_packets_per_flow + 
-                  total_bytes + frac_upstream_bytes + frac_downstream_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet", data = training_data)
-  #print(varImp(model))
-  test_data[, predicted_event := as.character(predict(model, newdata = test_data, type = "class"))]
-  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
-  print(prec_recall)
-  
-  #Measure overall accuracy
-  setkey(test_data, Event, predicted_event)
-  cat(paste("Overall accuracy = ", nrow(test_data[(Event == predicted_event),])/nrow(test_data), "\n\n", sep = "")) #0.608391
-  
-  #Compute the micro-average recall values of the classes
-  
-  dt_prec_recall <- as.data.table(prec_recall)
-  setkey(dt_prec_recall, actual)
-  row_totals <- dt_prec_recall[, list(row_total = sum(N)), by = actual]
-  setkey(row_totals, actual)
-  for_recall <- dt_prec_recall[row_totals, nomatch = 0]
-  setkey(for_recall, actual, predicted)
-  for_recall <- for_recall[(actual == predicted),]
-  for_recall[, recall := N/row_total]
-  setnames(for_recall, "actual", "Event")
-  print(for_recall) #Re-Tweet, Reply Tweet and Tweet + Image have recall values 0.5961538, 0.7391304 and 0.8148148 respectively
-  cat("\n")
-  
-  #Compute the micro-average precision values of the classes
-  
-  setkey(dt_prec_recall, predicted)
-  column_totals <- dt_prec_recall[, list(column_total = sum(N)), by = predicted]
-  setkey(column_totals, predicted)
-  for_precision <- dt_prec_recall[column_totals, nomatch = 0]
-  setkey(for_precision, actual, predicted)
-  for_precision <- for_precision[(actual == predicted),]
-  for_precision[, precision := N/column_total]
-  print(for_precision) #Re-Tweet, Reply Tweet and Tweet + Image have recall values 0.6078431, 0.4857143 and 1.0 respectively
-  
-  #Some of the most important predictors are: majority_domain (0.14384041), upstream_bytes (0.14375551), n_packets (0.14084035), n_upstream_packets (0.13911527), avg_packets_per_session (0.13765281),
-  #n_flows (0.09794633)
-  model
-}
-
 
 prepare_data_for_detecting_endtimes <- function(hidden_and_vis_states_file, events_file)
 {
@@ -200,8 +136,9 @@ prepare_data_for_detecting_endtimes <- function(hidden_and_vis_states_file, even
   hidden_and_vis_states
 }
 
+#Decision tree.
 
-detect_endtimes <- function(training_data, test_data, hidden_and_vis_states_with_eoe_file)
+detect_endtimes_rpart <- function(training_data, test_data, hidden_and_vis_states_with_eoe_file)
 {
   #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
   test_data <- test_data[test_data$majority_domain %in% unique(training_data$majority_domain),]
@@ -210,12 +147,25 @@ detect_endtimes <- function(training_data, test_data, hidden_and_vis_states_with
   print(table(test_data$end_of_event))
   
   #Note: Event cannot be kept as a predictor as it would not be available in real data
-  model <- rpart("end_of_event ~ n_packets + n_sessions + n_flows + n_downstream_packets + n_upstream_packets + 
-                  factor(majority_domain) + upstream_bytes + downstream_bytes + frac_upstream_packets + frac_downstream_packets + 
-                  avg_packets_per_session + avg_packets_per_flow + 
-                  total_bytes + frac_upstream_bytes + frac_downstream_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet", data = training_data)
+  tune.out <- tune.rpart(end_of_event ~ n_packets + n_sessions + n_flows + n_downstream_packets + n_upstream_packets + 
+                         factor(majority_domain) + upstream_bytes + downstream_bytes + frac_upstream_packets + frac_downstream_packets + 
+                         avg_packets_per_session + avg_packets_per_flow + 
+                         total_bytes + frac_upstream_bytes + frac_downstream_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet, 
+                         data = training_data, minsplit = c(5, 10, 15, 20), maxdepth = seq(5, 30, 5))
+  print(summary(tune.out))
+  plot(tune.out)
   
-  test_data[, predicted_end_of_event := as.character(predict(model, newdata = test_data, type = "class"))]
+  bestmod <- tune.out$best.model
+  test_data[, predicted_end_of_event := as.character(predict(bestmod, newdata = test_data, type = "class"))]
+  
+  probabilities <- predict(bestmod, newdata = test_data, type = "prob")
+  print(data.frame(timestamp = test_data$LocalTime, n_upstream_packets = test_data$n_upstream_packets,
+                   avg_downstream_bytes_per_packet = test_data$avg_downstream_bytes_per_packet,
+                   avg_bytes_per_packet = test_data$avg_bytes_per_packet,
+                   total_bytes = test_data$total_bytes,
+                   avg_packets_per_session = test_data$avg_packets_per_session,
+                   prob_end_of_event = probabilities[, "TRUE"]))
+  
   prec_recall <- table(test_data[, end_of_event], test_data[, predicted_end_of_event], dnn = list('actual', 'predicted'))
   print(prec_recall)
   
@@ -229,7 +179,43 @@ detect_endtimes <- function(training_data, test_data, hidden_and_vis_states_with
   #Write the test data back with the predicted values of end_of_event. No need to write the data points that come from training data because predicted_end_of_event will be NA for them.
   test_data <- test_data[, .SD, .SDcols = c("LocalTime", "Event", "end_of_event", "predicted_end_of_event")]
   write.table(test_data, hidden_and_vis_states_with_eoe_file, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  model
+
+  tune.out
+}
+
+#SVM
+
+detect_endtimes_svm <- function(training_data, test_data, hidden_and_vis_states_with_eoe_file)
+{
+  #Because of the random split, if we encounter values of Event in test_data that were not encountered in training_data, then there will be a problem. Avoid that.
+  test_data <- test_data[test_data$majority_domain %in% unique(training_data$majority_domain),]
+  
+  print(table(training_data$end_of_event)) 
+  print(table(test_data$end_of_event))
+  
+  #Note: Event cannot be kept as a predictor as it would not be available in real data
+  cols <- c("end_of_event", "LocalTime", "Event", "majority_domain")            
+  tune.out = tune.svm(training_data[, .SD, .SDcols = -cols], training_data$end_of_event, kernel = "radial", 
+                      cost = c(0.001, 0.01, 0.1, 1, 10, 100, 1000), gamma = c(0.125, 0.25, 0.5, 1, 2, 3, 4, 5))
+  bestmod <- tune.out$best.model
+  
+  test_data_end_of_event <- test_data[, end_of_event] #Retain this before dropping as we will need it for contingency table
+  test_data <- test_data[, .SD, .SDcols = -cols]
+  test_data[, predicted_end_of_event := as.character(predict(bestmod, newdata = test_data))]
+  
+  prec_recall <- table(test_data_end_of_event, test_data[, predicted_end_of_event], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  #Restore back end_of_event in test_data
+  test_data[, end_of_event := test_data_end_of_event]
+  setkey(test_data, end_of_event, predicted_end_of_event)
+  cat(paste("Overall accuracy = ", nrow(test_data[(end_of_event == predicted_end_of_event),])/nrow(test_data), 
+            ", recall = ", prec_recall[2,2]/sum(prec_recall[2,]), 
+            ", precision = ", prec_recall[2,2]/sum(prec_recall[,2]), "\n\n", sep = "")) #0.8725868
+  #The end_of_events can be identified with recall of 0.05882 and precision of 0.66666
+  
+  tune.out
 }
 
 
@@ -258,8 +244,8 @@ detect_endtimes_from_separate_files <- function()
   training_data <- create_bs_by_over_and_undersampling(training_data)
   test_data <- prepare_data_for_detecting_endtimes("/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv", 
                                                  "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv")
-  model <- detect_endtimes(training_data, test_data, "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_with_eoe_23_Feb_2016_Set_II.csv")
   #Overall accuracy = 0.8378, recall = 0.147, precision = 0.278
+  tune.out <- detect_endtimes_rpart(training_data, test_data, "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_with_eoe_23_Feb_2016_Set_II.csv")
 }
 
 
@@ -379,7 +365,7 @@ prepare_packet_data_for_CRF_from_single_file <- function()
   revised_packets
 }
 
-#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn crf_template_ct ~/cleartrail_osn/for_CRF/SET3/TC1and2/train_ct_CRF.data model_ct
+#To train with CRF++, from ~/cleartrail_analytics, run the following command: ~/crf++/CRF++-0.58/crf_learn -t crf_template_ct ~/cleartrail_osn/for_CRF/SET3/TC1and2/train_ct_CRF.data model_ct
 #To test with CFR++, run ~/crf++/CRF++-0.58/crf_test -m model_ct ~/cleartrail_osn/for_CRF/SET3/TC1and2/test_ct_CRF.data > ~/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data
 
 prepare_packet_data_for_CRF_from_separate_files <- function()
