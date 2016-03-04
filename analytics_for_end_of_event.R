@@ -40,12 +40,15 @@ terminating_flows <- function()
   setkey(revised_packets, EventNumber)
   revised_packets <- revised_packets[(!is.na(EventNumber)),]
   
-  #For each session and end timestamp, take the last matching flow as terminating flow.
-  
-  revised_packets$session_id <- sapply(strsplit(revised_packets$flow_id, split='_', fixed=TRUE), function(x) (x[1]))
-  revised_packets$flow_id <- sapply(strsplit(revised_packets$flow_id, split='_', fixed=TRUE), function(x) (x[2]))
+  #We rename the original flow_id column as session_flow_id and split it into session_id and flow_id
+  revised_packets$session_flow_id <- revised_packets$flow_id
+  revised_packets$session_id <- sapply(strsplit(revised_packets$session_flow_id, split='_', fixed=TRUE), function(x) (x[1]))
+  revised_packets$flow_id <- sapply(strsplit(revised_packets$session_flow_id, split='_', fixed=TRUE), function(x) (x[2]))
   revised_packets$flow_id <- as.numeric(revised_packets$flow_id)
   revised_packets$session_id <- as.numeric(revised_packets$session_id)
+  
+  #For each session and end timestamp, take the last matching flow as terminating flow.
+  
   flow_ids_matching_endtimes <- revised_packets[(LocalTime %in% events$EndTime),]
   flow_ids_matching_endtimes <- flow_ids_matching_endtimes[, .SD, .SDcols = c("flow_id", "session_id", "LocalTime")]
   setkey(flow_ids_matching_endtimes, session_id, LocalTime)
@@ -53,26 +56,26 @@ terminating_flows <- function()
   terminating_flow_ids <- paste(terminating_flows$session_id, "_", terminating_flows$max_flow_id, sep = "")
   print(terminating_flow_ids)
   
-  revised_packets$flow_id <- paste(revised_packets$session_id, "_", revised_packets$flow_id, sep = "")
-  revised_packets[(flow_id %in% terminating_flow_ids), terminating_flow := TRUE]
+  revised_packets[(session_flow_id %in% terminating_flow_ids), terminating_flow := TRUE]
   revised_packets[(is.na(terminating_flow)), terminating_flow := FALSE]
   
-  setkey(revised_packets, flow_id)
+  setkey(revised_packets, session_flow_id)
   flow_summaries <- revised_packets[, list(n_packets = length(Rx), direction = unique(Direction), 
                                            n_downstream_packets = get_n_downstream_packets(.SD),
                                            n_upstream_packets = get_n_upstream_packets(.SD), 
                                            upstream_bytes = get_upstream_bytes(.SD),
                                            downstream_bytes = get_downstream_bytes(.SD),
-                                           terminating_flow = unique(terminating_flow)), by = flow_id, 
-                                           .SDcols = c("Direction", "Rx", "Tx", "terminating_flow", "flow_id")]
+                                           terminating_flow = unique(terminating_flow),
+                                           avg_packets_last_k_flows = get_avg_packets_last_k_flows(.SD, 2, revised_packets)), by = session_flow_id, 
+                                           .SDcols = c("Direction", "Rx", "Tx", "terminating_flow", "session_id", "flow_id")]
                                            
   flow_summaries[, total_bytes := upstream_bytes + downstream_bytes]
   flow_summaries[, avg_bytes_per_packet := total_bytes/n_packets]
   flow_summaries[, avg_upstream_bytes_per_packet := upstream_bytes/n_packets]
   flow_summaries[, avg_downstream_bytes_per_packet := downstream_bytes/n_packets]
   
-  flow_summaries$session_id <- sapply(strsplit(flow_summaries$flow_id, split='_', fixed=TRUE), function(x) (x[1]))
-  flow_summaries$flow_id <- sapply(strsplit(flow_summaries$flow_id, split='_', fixed=TRUE), function(x) (x[2]))
+  flow_summaries$session_id <- sapply(strsplit(flow_summaries$session_flow_id, split='_', fixed=TRUE), function(x) (x[1]))
+  flow_summaries$flow_id <- sapply(strsplit(flow_summaries$session_flow_id, split='_', fixed=TRUE), function(x) (x[2]))
   flow_summaries$flow_id <- as.numeric(flow_summaries$flow_id)
   flow_summaries$session_id <- as.numeric(flow_summaries$session_id)
   
@@ -82,7 +85,7 @@ terminating_flows <- function()
   write.table(flow_summaries, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
   
   setkey(flow_summaries, terminating_flow)
-  length_check <- flow_summaries[, list(median_n_packets = median(n_packets), avg_n_packets = mean(n_packets)), by = terminating_flow] 
+  length_check <- flow_summaries[, list(median_n_packets = as.double(median(n_packets)), avg_n_packets = mean(n_packets)), by = terminating_flow] 
   print(length_check)
   
   #avg_n_packets is 6.839640 for non-terminating flows, 2.972222 for terminating flows. median n_packets is 2 for non-terminating flows, and 2.5 for terminating flows.
@@ -110,7 +113,7 @@ classify_flows <- function()
   
   #Note: Event cannot be kept as a predictor as it would not be available in real data
   tune.out <- tune.rpart(terminating_flow ~ n_packets + factor(direction) + n_downstream_packets + n_upstream_packets + 
-                          + upstream_bytes + total_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet, 
+                          + upstream_bytes + total_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet + avg_packets_last_k_flows, 
                          data = training_data, minsplit = c(5, 10, 15, 20), maxdepth = seq(5, 30, 5))
   print(summary(tune.out))
    
@@ -132,7 +135,7 @@ classify_flows <- function()
   setkey(test_data, session_id, flow_id)
   test_data <- test_data[order(session_id, flow_id),]
   write.table(test_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  test_data
+  bestmod
 }
 
 create_bs_by_over_and_undersampling <- function(df)
@@ -189,4 +192,21 @@ get_downstream_bytes <- function(dt)
 {
   downstream_packets <- dt[(Direction == "downstream")]
   sum(downstream_packets$Rx)
+}
+
+#What is the average number of packets combining this flow and the immediately previous (k-1) flows in this session
+get_avg_packets_last_k_flows <- function(dt, k = 2, revised_packets)
+{
+  #dt has the subset for one flow id 
+   
+  this_session_id <- dt[1, session_id]
+  this_flow_id <- dt[1, flow_id]
+  setkey(revised_packets, session_id, flow_id)
+  
+  min_flow_id_this_session <- min(revised_packets[(session_id == this_session_id),]$flow_id)
+  flow_at_window_start <- max(min_flow_id_this_session, this_flow_id - k + 1)
+  cat(paste("this_session_id = ", this_session_id, ", this_flow_id = ", this_flow_id, ", min_flow_id_this_session = ", min_flow_id_this_session, 
+            ", flow_at_window_start = ", flow_at_window_start, "\n", sep = ""))
+  subset_packets <- revised_packets[((session_id == this_session_id) & (flow_id >= flow_at_window_start) & (flow_id <= this_flow_id)),]
+  nrow(subset_packets)/k
 }
