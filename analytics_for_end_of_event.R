@@ -40,7 +40,20 @@ terminating_flows <- function()
   setkey(revised_packets, EventNumber)
   revised_packets <- revised_packets[(!is.na(EventNumber)),]
   
-  terminating_flow_ids <- unique(revised_packets[(LocalTime %in% events$EndTime), flow_id])
+  #For each session and end timestamp, take the last matching flow as terminating flow.
+  
+  revised_packets$session_id <- sapply(strsplit(revised_packets$flow_id, split='_', fixed=TRUE), function(x) (x[1]))
+  revised_packets$flow_id <- sapply(strsplit(revised_packets$flow_id, split='_', fixed=TRUE), function(x) (x[2]))
+  revised_packets$flow_id <- as.numeric(revised_packets$flow_id)
+  revised_packets$session_id <- as.numeric(revised_packets$session_id)
+  flow_ids_matching_endtimes <- revised_packets[(LocalTime %in% events$EndTime),]
+  flow_ids_matching_endtimes <- flow_ids_matching_endtimes[, .SD, .SDcols = c("flow_id", "session_id", "LocalTime")]
+  setkey(flow_ids_matching_endtimes, session_id, LocalTime)
+  terminating_flows <- flow_ids_matching_endtimes[, list(max_flow_id = max(flow_id)), by = list(session_id, LocalTime)]
+  terminating_flow_ids <- paste(terminating_flows$session_id, "_", terminating_flows$max_flow_id, sep = "")
+  print(terminating_flow_ids)
+  
+  revised_packets$flow_id <- paste(revised_packets$session_id, "_", revised_packets$flow_id, sep = "")
   revised_packets[(flow_id %in% terminating_flow_ids), terminating_flow := TRUE]
   revised_packets[(is.na(terminating_flow)), terminating_flow := FALSE]
   
@@ -60,6 +73,8 @@ terminating_flows <- function()
   
   flow_summaries$session_id <- sapply(strsplit(flow_summaries$flow_id, split='_', fixed=TRUE), function(x) (x[1]))
   flow_summaries$flow_id <- sapply(strsplit(flow_summaries$flow_id, split='_', fixed=TRUE), function(x) (x[2]))
+  flow_summaries$flow_id <- as.numeric(flow_summaries$flow_id)
+  flow_summaries$session_id <- as.numeric(flow_summaries$session_id)
   
   setkey(flow_summaries, session_id, flow_id)
   flow_summaries <- flow_summaries[order(session_id, flow_id),]
@@ -68,10 +83,9 @@ terminating_flows <- function()
   
   setkey(flow_summaries, terminating_flow)
   length_check <- flow_summaries[, list(median_n_packets = median(n_packets), avg_n_packets = mean(n_packets)), by = terminating_flow] 
+  print(length_check)
   
-  #avg_n_packets is 6.889302 for non-terminating flows, 4.12676 for terminating flows. However, median n_packets is 2 for both.
-  
-  #TODO: Fit a decision tree on flow_summaries to predict terminating_flow
+  #avg_n_packets is 6.839640 for non-terminating flows, 2.972222 for terminating flows. median n_packets is 2 for non-terminating flows, and 2.5 for terminating flows.
   revised_packets
 }
 
@@ -110,8 +124,8 @@ classify_flows <- function()
   setkey(test_data, terminating_flow, predicted_terminating_flow)
   cat(paste("Overall accuracy = ", nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data), 
             ", recall = ", prec_recall[2,2]/sum(prec_recall[2,]), 
-            ", precision = ", prec_recall[2,2]/sum(prec_recall[,2]), "\n\n", sep = "")) #0.79360465
-  #terminating_flow can be identified with recall of 0.6521 and precision of 0.1923
+            ", precision = ", prec_recall[2,2]/sum(prec_recall[,2]), "\n\n", sep = "")) #0.9273255
+  #terminating_flow can be identified with recall of 0.727272 and precision of 0.266666
   
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries_with_predicted_terminating_flow.csv"
   #Write the test data back with the predicted values of terminating_flow. No need to write the data points that come from training data because predicted_terminating_flow will be NA for them.
