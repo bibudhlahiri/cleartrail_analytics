@@ -96,8 +96,8 @@ classify_flows <- function()
 {
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries.csv"
   flow_summaries <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                           colClasses = c("numeric", "numeric", "character", "numeric", "numeric", "numeric", "numeric", "character", 
-                                          "numeric", "numeric", "numeric", "numeric", "numeric"),
+                           colClasses = c("character", "numeric", "character", "numeric", "numeric", "numeric", "numeric", "character", "numeric",
+                                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
                            data.table = TRUE)
   flow_summaries$terminating_flow <- as.factor(flow_summaries$terminating_flow)
   train = sample(1:nrow(flow_summaries), 0.7*nrow(flow_summaries))
@@ -113,7 +113,8 @@ classify_flows <- function()
   
   #Note: Event cannot be kept as a predictor as it would not be available in real data
   tune.out <- tune.rpart(terminating_flow ~ n_packets + factor(direction) + n_downstream_packets + n_upstream_packets + 
-                          + upstream_bytes + total_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet + avg_packets_last_k_flows, 
+                          + upstream_bytes + total_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet
+                          + avg_packets_last_k_flows, 
                          data = training_data, minsplit = c(5, 10, 15, 20), maxdepth = seq(5, 30, 5))
   print(summary(tune.out))
    
@@ -125,9 +126,11 @@ classify_flows <- function()
   
   #Measure overall accuracy
   setkey(test_data, terminating_flow, predicted_terminating_flow)
-  cat(paste("Overall accuracy = ", nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data), 
-            ", recall = ", prec_recall[2,2]/sum(prec_recall[2,]), 
-            ", precision = ", prec_recall[2,2]/sum(prec_recall[,2]), "\n\n", sep = "")) #0.9273255
+  accuracy <- nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data)
+  recall <- prec_recall[2,2]/sum(prec_recall[2,])
+  precision <- prec_recall[2,2]/sum(prec_recall[,2])
+  cat(paste("Overall accuracy = ", accuracy, ", recall = ", recall, ", precision = ", precision, "\n\n", sep = "")) #0.9273255
+  
   #terminating_flow can be identified with recall of 0.727272 and precision of 0.266666
   
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries_with_predicted_terminating_flow.csv"
@@ -135,12 +138,38 @@ classify_flows <- function()
   setkey(test_data, session_id, flow_id)
   test_data <- test_data[order(session_id, flow_id),]
   write.table(test_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  bestmod
+  #print(bestmod)
+  #print(bestmod$variable.importance/sum(bestmod$variable.importance))
+  list(accuracy = accuracy, recall = recall, precision = precision)
+}
+
+#Run an ML algo n times and take the average accuracy, etc
+run_ml <- function(n_trials = 10)
+{
+  results = data.table(accuracy = numeric(n_trials), recall = numeric(n_trials), precision = numeric(n_trials))
+  for (i in 1:n_trials)
+  {
+    ret_obj <- classify_flows()
+    print(ret_obj)
+    results[i, accuracy := ret_obj[["accuracy"]]]
+    results[i, recall := ret_obj[["recall"]]]
+    results[i, precision := ret_obj[["precision"]]]
+  }
+  print(results)
+  
+  #Before adding avg_packets_last_k_flows, mean accuracy = 0.8555, dispersion = 0.0385, mean recall = 0.4752, dispersion = 0.1929, mean precision = 0.09149, dispersion = 0.0204. 
+  #One reason the recall varies so much is that in the test data, the number of TRUE cases is very low, and hence the number detected is also pretty low in absolute terms.
+  
+  #After adding avg_packets_last_k_flows, mean accuracy = 0.8927, dispersion = 0.0305, mean recall = 0.5778, dispersion = 0.1383, mean precision = 0.142, dispersion = 0.0447.
+  #So, results improved after adding avg_packets_last_k_flows.
+  
+  cat(paste("Mean accuracy = ", round(mean(results$accuracy), 4), ", dispersion = ", round(sd(results$accuracy), 4),
+            ", mean recall = ", round(mean(results$recall), 4), ", dispersion = ", round(sd(results$recall),4),
+            ", mean precision = ", round(mean(results$precision),4), ", dispersion = ", round(sd(results$precision),4), "\n", sep = ""))
 }
 
 create_bs_by_over_and_undersampling <- function(df)
 {
-  set.seed(1)
   n_df <- nrow(df)
   size_each_part <- n_df/2
 
@@ -198,15 +227,12 @@ get_downstream_bytes <- function(dt)
 get_avg_packets_last_k_flows <- function(dt, k = 2, revised_packets)
 {
   #dt has the subset for one flow id 
-   
   this_session_id <- dt[1, session_id]
   this_flow_id <- dt[1, flow_id]
   setkey(revised_packets, session_id, flow_id)
   
   min_flow_id_this_session <- min(revised_packets[(session_id == this_session_id),]$flow_id)
   flow_at_window_start <- max(min_flow_id_this_session, this_flow_id - k + 1)
-  cat(paste("this_session_id = ", this_session_id, ", this_flow_id = ", this_flow_id, ", min_flow_id_this_session = ", min_flow_id_this_session, 
-            ", flow_at_window_start = ", flow_at_window_start, "\n", sep = ""))
   subset_packets <- revised_packets[((session_id == this_session_id) & (flow_id >= flow_at_window_start) & (flow_id <= this_flow_id)),]
   nrow(subset_packets)/k
 }
