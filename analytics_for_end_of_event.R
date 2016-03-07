@@ -59,25 +59,18 @@ terminating_flows <- function()
   revised_packets[(session_flow_id %in% terminating_flow_ids), terminating_flow := TRUE]
   revised_packets[(is.na(terminating_flow)), terminating_flow := FALSE]
   
-  setkey(revised_packets, session_flow_id)
-  flow_summaries <- revised_packets[, list(n_packets = length(Rx), direction = unique(Direction), 
-                                           n_downstream_packets = get_n_downstream_packets(.SD),
-                                           n_upstream_packets = get_n_upstream_packets(.SD), 
-                                           upstream_bytes = get_upstream_bytes(.SD),
-                                           downstream_bytes = get_downstream_bytes(.SD),
+  #setkey(revised_packets, session_flow_id)
+  setkey(revised_packets, session_id, flow_id)
+  flow_summaries <- revised_packets[, list(n_packets = length(Rx), direction = unique(Direction),  
+                                           total_bytes = get_total_bytes(.SD),
                                            terminating_flow = unique(terminating_flow),
-                                           avg_packets_last_k_flows = get_avg_packets_last_k_flows(.SD, 2, revised_packets)), by = session_flow_id, 
-                                           .SDcols = c("Direction", "Rx", "Tx", "terminating_flow", "session_id", "flow_id")]
+                                           avg_packets_last_k_flows = get_avg_packets_last_k_flows(.SD, 2, revised_packets), 
+                                           median_bytes_per_packet = get_median_bytes_per_packet(.SD),
+                                           n_direction_reversals = get_n_direction_reversals(.SD, 2, revised_packets)),
+                                           by = list(session_id, flow_id), 
+                                           .SDcols = c("Direction", "Rx", "Tx", "terminating_flow", "session_id", "flow_id", "LocalTime")]
                                            
-  flow_summaries[, total_bytes := upstream_bytes + downstream_bytes]
   flow_summaries[, avg_bytes_per_packet := total_bytes/n_packets]
-  flow_summaries[, avg_upstream_bytes_per_packet := upstream_bytes/n_packets]
-  flow_summaries[, avg_downstream_bytes_per_packet := downstream_bytes/n_packets]
-  
-  flow_summaries$session_id <- sapply(strsplit(flow_summaries$session_flow_id, split='_', fixed=TRUE), function(x) (x[1]))
-  flow_summaries$flow_id <- sapply(strsplit(flow_summaries$session_flow_id, split='_', fixed=TRUE), function(x) (x[2]))
-  flow_summaries$flow_id <- as.numeric(flow_summaries$flow_id)
-  flow_summaries$session_id <- as.numeric(flow_summaries$session_id)
   
   setkey(flow_summaries, session_id, flow_id)
   flow_summaries <- flow_summaries[order(session_id, flow_id),]
@@ -89,15 +82,15 @@ terminating_flows <- function()
   print(length_check)
   
   #avg_n_packets is 6.839640 for non-terminating flows, 2.972222 for terminating flows. median n_packets is 2 for non-terminating flows, and 2.5 for terminating flows.
-  revised_packets
+  flow_summaries
 }
 
 classify_flows <- function()
 {
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries.csv"
   flow_summaries <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                           colClasses = c("character", "numeric", "character", "numeric", "numeric", "numeric", "numeric", "character", "numeric",
-                                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
+                           colClasses = c("numeric", "numeric", "numeric", "character", 
+                                          "numeric", "character", "numeric", "numeric", "numeric", "numeric"),
                            data.table = TRUE)
   flow_summaries$terminating_flow <- as.factor(flow_summaries$terminating_flow)
   train = sample(1:nrow(flow_summaries), 0.7*nrow(flow_summaries))
@@ -112,10 +105,9 @@ classify_flows <- function()
   print(table(test_data$terminating_flow))
   
   #Note: Event cannot be kept as a predictor as it would not be available in real data
-  tune.out <- tune.rpart(terminating_flow ~ n_packets + factor(direction) + n_downstream_packets + n_upstream_packets + 
-                          + upstream_bytes + total_bytes + avg_bytes_per_packet + avg_upstream_bytes_per_packet + avg_downstream_bytes_per_packet
-                          + avg_packets_last_k_flows, 
-                         data = training_data, minsplit = c(5, 10, 15, 20), maxdepth = seq(5, 30, 5))
+  cols <- c("session_id", "flow_id")            
+                      
+  tune.out <- tune.rpart(terminating_flow ~ ., data = training_data[, .SD, .SDcols = -cols], minsplit = c(5, 10, 15, 20), maxdepth = seq(5, 30, 5))
   print(summary(tune.out))
    
   bestmod <- tune.out$best.model
@@ -131,15 +123,13 @@ classify_flows <- function()
   precision <- prec_recall[2,2]/sum(prec_recall[,2])
   cat(paste("Overall accuracy = ", accuracy, ", recall = ", recall, ", precision = ", precision, "\n\n", sep = "")) #0.9273255
   
-  #terminating_flow can be identified with recall of 0.727272 and precision of 0.266666
-  
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries_with_predicted_terminating_flow.csv"
   #Write the test data back with the predicted values of terminating_flow. No need to write the data points that come from training data because predicted_terminating_flow will be NA for them.
   setkey(test_data, session_id, flow_id)
   test_data <- test_data[order(session_id, flow_id),]
   write.table(test_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  #print(bestmod)
-  #print(bestmod$variable.importance/sum(bestmod$variable.importance))
+  print(bestmod)
+  print(bestmod$variable.importance/sum(bestmod$variable.importance))
   list(accuracy = accuracy, recall = recall, precision = precision)
 }
 
@@ -162,6 +152,13 @@ run_ml <- function(n_trials = 10)
   
   #After adding avg_packets_last_k_flows, mean accuracy = 0.8927, dispersion = 0.0305, mean recall = 0.5778, dispersion = 0.1383, mean precision = 0.142, dispersion = 0.0447.
   #So, results improved after adding avg_packets_last_k_flows.
+  
+  #After dropping redundant features which captured downstream and upstream bytes separately, 
+  #mean accuracy = 0.9061, dispersion = 0.0162, mean recall = 0.7188, dispersion = 0.1921, mean precision = 0.2124, dispersion = 0.0638
+  
+  #After adding median_bytes_per_packet, mean accuracy = 0.8924, dispersion = 0.0271, mean recall = 0.7434, dispersion = 0.1251, mean precision = 0.2248, dispersion = 0.0597
+  
+  #After adding n_direction_reversals, mean accuracy = 0.9041, dispersion = 0.0285, mean recall = 0.5969, dispersion = 0.2245, mean precision = 0.2054, dispersion = 0.0796
   
   cat(paste("Mean accuracy = ", round(mean(results$accuracy), 4), ", dispersion = ", round(sd(results$accuracy), 4),
             ", mean recall = ", round(mean(results$recall), 4), ", dispersion = ", round(sd(results$recall),4),
@@ -201,26 +198,10 @@ lookup_event <- function(LocalTime, events)
   matching_row[, EventNumber]
 }
 
-get_n_downstream_packets <- function(dt)
+get_total_bytes <- function(dt)
 {
-  nrow(dt[(Direction == "downstream")])
-}
-
-get_n_upstream_packets <- function(dt)
-{
-  nrow(dt[(Direction == "upstream")])
-}
-
-get_upstream_bytes <- function(dt)
-{
-  upstream_packets <- dt[(Direction == "upstream")]
-  sum(upstream_packets$Tx)
-}
-
-get_downstream_bytes <- function(dt)
-{
-  downstream_packets <- dt[(Direction == "downstream")]
-  sum(downstream_packets$Rx)
+  #One flow is in one direction only, so one of the two summands will be 0
+  sum(dt$Tx) + sum(dt$Rx)
 }
 
 #What is the average number of packets combining this flow and the immediately previous (k-1) flows in this session
@@ -235,4 +216,25 @@ get_avg_packets_last_k_flows <- function(dt, k = 2, revised_packets)
   flow_at_window_start <- max(min_flow_id_this_session, this_flow_id - k + 1)
   subset_packets <- revised_packets[((session_id == this_session_id) & (flow_id >= flow_at_window_start) & (flow_id <= this_flow_id)),]
   nrow(subset_packets)/k
+}
+
+get_median_bytes_per_packet <- function(dt)
+{
+  bytes_per_packet <- c(dt$Tx, dt$Rx)
+  median(bytes_per_packet[bytes_per_packet > 0])
+}
+
+#What is the number of times flow direction changes in this session in last T seconds
+get_n_direction_reversals <- function(dt, T = 2, revised_packets)
+{
+  this_session_id <- dt[1, session_id]
+  this_flow_id <- dt[1, flow_id]
+  this_timestamp <- dt[1, LocalTime]
+  start_window <- strftime(strptime(as.character(this_timestamp), "%H:%M:%S") - T, "%H:%M:%S")
+  #cat(paste("this_session_id = ", this_session_id, ", this_flow_id = ", this_flow_id, ", this_timestamp = ", this_timestamp, ", start_window = ", start_window, "\n", sep = ""))
+  setkey(revised_packets, session_id, flow_id, LocalTime)
+  flows_in_window <- revised_packets[((session_id == this_session_id) & (flow_id <= this_flow_id) & (LocalTime >= as.character(start_window))),]
+  #print(flows_in_window)
+  #cat(paste("return ", length(unique(flows_in_window$flow_id)), "\n", sep = ""))
+  length(unique(flows_in_window$flow_id))
 }
