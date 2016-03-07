@@ -1,6 +1,7 @@
 library(data.table)
 library(rpart)
 library(e1071)
+library(randomForest)
 
 #Assign numbers to events. Give an event number to each packet depending on its timestamp. Find the flows that coincide time-wise with ends of events and mark the last flow among them 
 #as terminating flow. Then, do an analysis of lengths (in terms of number of packets) of flows that are terminating vs flows that are non-terminating.
@@ -54,7 +55,6 @@ terminating_flows <- function()
   setkey(flow_ids_matching_endtimes, session_id, LocalTime)
   terminating_flows <- flow_ids_matching_endtimes[, list(max_flow_id = max(flow_id)), by = list(session_id, LocalTime)]
   terminating_flow_ids <- paste(terminating_flows$session_id, "_", terminating_flows$max_flow_id, sep = "")
-  print(terminating_flow_ids)
   
   revised_packets[(session_flow_id %in% terminating_flow_ids), terminating_flow := TRUE]
   revised_packets[(is.na(terminating_flow)), terminating_flow := FALSE]
@@ -65,8 +65,7 @@ terminating_flows <- function()
                                            total_bytes = get_total_bytes(.SD),
                                            terminating_flow = unique(terminating_flow),
                                            avg_packets_last_k_flows = get_avg_packets_last_k_flows(.SD, 2, revised_packets), 
-                                           median_bytes_per_packet = get_median_bytes_per_packet(.SD),
-                                           max_bytes_per_packet = get_max_bytes_per_packet(.SD)),
+                                           median_bytes_per_packet = get_median_bytes_per_packet(.SD)),
                                            by = list(session_id, flow_id), 
                                            .SDcols = c("Direction", "Rx", "Tx", "terminating_flow", "session_id", "flow_id", "LocalTime")]
                                            
@@ -85,12 +84,12 @@ terminating_flows <- function()
   flow_summaries
 }
 
-classify_flows <- function()
+classify_flows_dtree <- function()
 {
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries.csv"
   flow_summaries <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                            colClasses = c("numeric", "numeric", "numeric", "character", 
-                                          "numeric", "character", "numeric", "numeric", "numeric", "numeric"),
+                                          "numeric", "character", "numeric", "numeric", "numeric"),
                            data.table = TRUE)
   flow_summaries$terminating_flow <- as.factor(flow_summaries$terminating_flow)
   train = sample(1:nrow(flow_summaries), 0.7*nrow(flow_summaries))
@@ -104,7 +103,6 @@ classify_flows <- function()
   print(table(training_data$terminating_flow)) 
   print(table(test_data$terminating_flow))
   
-  #Note: Event cannot be kept as a predictor as it would not be available in real data
   cols <- c("session_id", "flow_id")            
                       
   tune.out <- tune.rpart(terminating_flow ~ ., data = training_data[, .SD, .SDcols = -cols], minsplit = c(5, 10, 15, 20), maxdepth = seq(5, 30, 5))
@@ -133,13 +131,61 @@ classify_flows <- function()
   list(accuracy = accuracy, recall = recall, precision = precision)
 }
 
+classify_flows_random_forest <- function()
+{
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries.csv"
+  flow_summaries <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                           colClasses = c("numeric", "numeric", "numeric", "character", 
+                                          "numeric", "character", "numeric", "numeric", "numeric"),
+                           data.table = TRUE)
+  flow_summaries$terminating_flow <- as.factor(flow_summaries$terminating_flow)
+  flow_summaries$direction <- as.factor(flow_summaries$direction)
+  train = sample(1:nrow(flow_summaries), 0.7*nrow(flow_summaries))
+  test = (-train)
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(flow_summaries) - length(train)), "\n", sep = ""))
+  
+  training_data <- flow_summaries[train, ]
+  training_data <- create_bs_by_over_and_undersampling(training_data)
+  test_data <- flow_summaries[test, ]
+  
+  print(table(training_data$terminating_flow)) 
+  print(table(test_data$terminating_flow))
+  
+  cols <- c("session_id", "flow_id")                               
+  model <- randomForest(terminating_flow ~ ., data = training_data[, .SD, .SDcols = -cols])
+  
+  impRF <- model$importance
+  impRF <- impRF[, "MeanDecreaseGini"]
+  imp <- impRF/sum(impRF)
+  print(sort(imp, decreasing = TRUE))
+   
+  test_data[, predicted_terminating_flow := as.character(predict(model, newdata = test_data, type = "class"))]
+  
+  prec_recall <- table(test_data[, terminating_flow], test_data[, predicted_terminating_flow], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  setkey(test_data, terminating_flow, predicted_terminating_flow)
+  accuracy <- nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data)
+  recall <- prec_recall[2,2]/sum(prec_recall[2,])
+  precision <- prec_recall[2,2]/sum(prec_recall[,2])
+  cat(paste("Overall accuracy = ", accuracy, ", recall = ", recall, ", precision = ", precision, "\n\n", sep = "")) #0.9273255
+  
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries_with_predicted_terminating_flow.csv"
+  #Write the test data back with the predicted values of terminating_flow. No need to write the data points that come from training data because predicted_terminating_flow will be NA for them.
+  setkey(test_data, session_id, flow_id)
+  test_data <- test_data[order(session_id, flow_id),]
+  write.table(test_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  list(accuracy = accuracy, recall = recall, precision = precision, model = model)
+}
+
 #Run an ML algo n times and take the average accuracy, etc
 run_ml <- function(n_trials = 10)
 {
   results = data.table(accuracy = numeric(n_trials), recall = numeric(n_trials), precision = numeric(n_trials))
   for (i in 1:n_trials)
   {
-    ret_obj <- classify_flows()
+    ret_obj <- classify_flows_random_forest()
     print(ret_obj)
     results[i, accuracy := ret_obj[["accuracy"]]]
     results[i, recall := ret_obj[["recall"]]]
@@ -147,22 +193,10 @@ run_ml <- function(n_trials = 10)
   }
   print(results)
   
-  #Before adding avg_packets_last_k_flows, mean accuracy = 0.8555, dispersion = 0.0385, mean recall = 0.4752, dispersion = 0.1929, mean precision = 0.09149, dispersion = 0.0204. 
-  #One reason the recall varies so much is that in the test data, the number of TRUE cases is very low, and hence the number detected is also pretty low in absolute terms.
-  
-  #After adding avg_packets_last_k_flows, mean accuracy = 0.8927, dispersion = 0.0305, mean recall = 0.5778, dispersion = 0.1383, mean precision = 0.142, dispersion = 0.0447.
-  #So, results improved after adding avg_packets_last_k_flows.
-  
-  #After dropping redundant features which captured downstream and upstream bytes separately, 
-  #mean accuracy = 0.9061, dispersion = 0.0162, mean recall = 0.7188, dispersion = 0.1921, mean precision = 0.2124, dispersion = 0.0638
-  
-  #After adding median_bytes_per_packet, mean accuracy = 0.8924, dispersion = 0.0271, mean recall = 0.7434, dispersion = 0.1251, mean precision = 0.2248, dispersion = 0.0597
-  
-  #After adding max_bytes_per_packet, mean accuracy = 0.9032, dispersion = 0.0242, mean recall = 0.6704, dispersion = 0.1643, mean precision = 0.1875, dispersion = 0.0622
-  
   cat(paste("Mean accuracy = ", round(mean(results$accuracy), 4), ", dispersion = ", round(sd(results$accuracy), 4),
             ", mean recall = ", round(mean(results$recall), 4), ", dispersion = ", round(sd(results$recall),4),
             ", mean precision = ", round(mean(results$precision),4), ", dispersion = ", round(sd(results$precision),4), "\n", sep = ""))
+  ret_obj[["model"]]
 }
 
 create_bs_by_over_and_undersampling <- function(df)
@@ -222,10 +256,4 @@ get_median_bytes_per_packet <- function(dt)
 {
   bytes_per_packet <- c(dt$Tx, dt$Rx)
   median(bytes_per_packet[bytes_per_packet > 0])
-}
-
-get_max_bytes_per_packet <- function(dt)
-{
-  bytes_per_packet <- c(dt$Tx, dt$Rx)
-  max(bytes_per_packet[bytes_per_packet > 0])
 }
