@@ -66,7 +66,7 @@ terminating_flows <- function()
                                            terminating_flow = unique(terminating_flow),
                                            avg_packets_last_k_flows = get_avg_packets_last_k_flows(.SD, 2, revised_packets), 
                                            median_bytes_per_packet = get_median_bytes_per_packet(.SD),
-                                           n_direction_reversals = get_n_direction_reversals(.SD, 2, revised_packets)),
+                                           max_bytes_per_packet = get_max_bytes_per_packet(.SD)),
                                            by = list(session_id, flow_id), 
                                            .SDcols = c("Direction", "Rx", "Tx", "terminating_flow", "session_id", "flow_id", "LocalTime")]
                                            
@@ -158,7 +158,7 @@ run_ml <- function(n_trials = 10)
   
   #After adding median_bytes_per_packet, mean accuracy = 0.8924, dispersion = 0.0271, mean recall = 0.7434, dispersion = 0.1251, mean precision = 0.2248, dispersion = 0.0597
   
-  #After adding n_direction_reversals, mean accuracy = 0.9041, dispersion = 0.0285, mean recall = 0.5969, dispersion = 0.2245, mean precision = 0.2054, dispersion = 0.0796
+  #After adding max_bytes_per_packet, mean accuracy = 0.9032, dispersion = 0.0242, mean recall = 0.6704, dispersion = 0.1643, mean precision = 0.1875, dispersion = 0.0622
   
   cat(paste("Mean accuracy = ", round(mean(results$accuracy), 4), ", dispersion = ", round(sd(results$accuracy), 4),
             ", mean recall = ", round(mean(results$recall), 4), ", dispersion = ", round(sd(results$recall),4),
@@ -224,17 +224,8 @@ get_median_bytes_per_packet <- function(dt)
   median(bytes_per_packet[bytes_per_packet > 0])
 }
 
-#What is the number of times flow direction changes in this session in last T seconds
-get_n_direction_reversals <- function(dt, T = 2, revised_packets)
+get_max_bytes_per_packet <- function(dt)
 {
-  this_session_id <- dt[1, session_id]
-  this_flow_id <- dt[1, flow_id]
-  this_timestamp <- dt[1, LocalTime]
-  start_window <- strftime(strptime(as.character(this_timestamp), "%H:%M:%S") - T, "%H:%M:%S")
-  #cat(paste("this_session_id = ", this_session_id, ", this_flow_id = ", this_flow_id, ", this_timestamp = ", this_timestamp, ", start_window = ", start_window, "\n", sep = ""))
-  setkey(revised_packets, session_id, flow_id, LocalTime)
-  flows_in_window <- revised_packets[((session_id == this_session_id) & (flow_id <= this_flow_id) & (LocalTime >= as.character(start_window))),]
-  #print(flows_in_window)
-  #cat(paste("return ", length(unique(flows_in_window$flow_id)), "\n", sep = ""))
-  length(unique(flows_in_window$flow_id))
+  bytes_per_packet <- c(dt$Tx, dt$Rx)
+  max(bytes_per_packet[bytes_per_packet > 0])
 }
