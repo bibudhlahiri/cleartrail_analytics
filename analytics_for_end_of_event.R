@@ -153,13 +153,16 @@ classify_flows_random_forest <- function()
   
   cols <- c("session_id", "flow_id")                               
   model <- randomForest(terminating_flow ~ ., data = training_data[, .SD, .SDcols = -cols])
+  tune.out <- tune.randomForest(terminating_flow ~ ., data = training_data[, .SD, .SDcols = -cols], ntree = c(500, 1000), nodesize = seq(10, 30, 10))
+  print(summary(tune.out))
   
-  impRF <- model$importance
+  bestmod <- tune.out$best.model
+  impRF <- bestmod$importance
   impRF <- impRF[, "MeanDecreaseGini"]
   imp <- impRF/sum(impRF)
   print(sort(imp, decreasing = TRUE))
    
-  test_data[, predicted_terminating_flow := as.character(predict(model, newdata = test_data, type = "class"))]
+  test_data[, predicted_terminating_flow := as.character(predict(bestmod, newdata = test_data, type = "class"))]
   
   prec_recall <- table(test_data[, terminating_flow], test_data[, predicted_terminating_flow], dnn = list('actual', 'predicted'))
   print(prec_recall)
@@ -169,15 +172,58 @@ classify_flows_random_forest <- function()
   accuracy <- nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data)
   recall <- prec_recall[2,2]/sum(prec_recall[2,])
   precision <- prec_recall[2,2]/sum(prec_recall[,2])
-  cat(paste("Overall accuracy = ", accuracy, ", recall = ", recall, ", precision = ", precision, "\n\n", sep = "")) #0.9273255
+  cat(paste("Overall accuracy = ", accuracy, ", recall = ", recall, ", precision = ", precision, "\n\n", sep = "")) 
   
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries_with_predicted_terminating_flow.csv"
-  #Write the test data back with the predicted values of terminating_flow. No need to write the data points that come from training data because predicted_terminating_flow will be NA for them.
-  setkey(test_data, session_id, flow_id)
-  test_data <- test_data[order(session_id, flow_id),]
-  write.table(test_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  list(accuracy = accuracy, recall = recall, precision = precision, model = model)
+  list(accuracy = accuracy, recall = recall, precision = precision)
 }
+
+classify_flows_svm <- function()
+{
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries.csv"
+  flow_summaries <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                           colClasses = c("numeric", "numeric", "numeric", "character", 
+                                          "numeric", "character", "numeric", "numeric", "numeric"),
+                           data.table = TRUE)
+  flow_summaries$terminating_flow <- as.factor(flow_summaries$terminating_flow)
+  flow_summaries$direction <- as.factor(flow_summaries$direction)
+  train = sample(1:nrow(flow_summaries), 0.7*nrow(flow_summaries))
+  test = (-train)
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(flow_summaries) - length(train)), "\n", sep = ""))
+  
+  training_data <- flow_summaries[train, ]
+  training_data <- create_bs_by_over_and_undersampling(training_data)
+  test_data <- flow_summaries[test, ]
+  
+  print(table(training_data$terminating_flow)) 
+  print(table(test_data$terminating_flow))
+  
+  cols <- c("terminating_flow", "session_id", "flow_id", "direction") 
+  print(head(training_data[, .SD, .SDcols = -cols]))                              
+  tune.out = tune.svm(training_data[, .SD, .SDcols = -cols], training_data$terminating_flow, kernel = "radial", 
+                      cost = c(0.001, 0.01, 0.1, 1, 10, 100, 1000), gamma = c(0.125, 0.25, 0.5, 1, 2, 3, 4, 5))
+  print(summary(tune.out))
+  bestmod <- tune.out$best.model
+  
+  test_data_terminating_flow <- test_data[, terminating_flow] #Retain this before dropping as we will need it for contingency table
+  test_data <- test_data[, .SD, .SDcols = -cols]
+  test_data[, predicted_terminating_flow := as.character(predict(bestmod, newdata = test_data))]
+
+  prec_recall <- table(test_data_terminating_flow, test_data[, predicted_terminating_flow], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  #Restore back terminating_flow in test_data
+  test_data[, terminating_flow := test_data_terminating_flow]
+  setkey(test_data, terminating_flow, predicted_terminating_flow)
+  accuracy <- nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data)
+  recall <- prec_recall[2,2]/sum(prec_recall[2,])
+  precision <- prec_recall[2,2]/sum(prec_recall[,2])
+  cat(paste("Overall accuracy = ", accuracy, ", recall = ", recall, ", precision = ", precision, "\n\n", sep = "")) 
+  
+  list(accuracy = accuracy, recall = recall, precision = precision)
+}
+
+
 
 #Run an ML algo n times and take the average accuracy, etc
 run_ml <- function(n_trials = 10)
@@ -185,7 +231,7 @@ run_ml <- function(n_trials = 10)
   results = data.table(accuracy = numeric(n_trials), recall = numeric(n_trials), precision = numeric(n_trials))
   for (i in 1:n_trials)
   {
-    ret_obj <- classify_flows_random_forest()
+    ret_obj <- classify_flows_svm()
     print(ret_obj)
     results[i, accuracy := ret_obj[["accuracy"]]]
     results[i, recall := ret_obj[["recall"]]]
@@ -196,7 +242,6 @@ run_ml <- function(n_trials = 10)
   cat(paste("Mean accuracy = ", round(mean(results$accuracy), 4), ", dispersion = ", round(sd(results$accuracy), 4),
             ", mean recall = ", round(mean(results$recall), 4), ", dispersion = ", round(sd(results$recall),4),
             ", mean precision = ", round(mean(results$precision),4), ", dispersion = ", round(sd(results$precision),4), "\n", sep = ""))
-  ret_obj[["model"]]
 }
 
 create_bs_by_over_and_undersampling <- function(df)
