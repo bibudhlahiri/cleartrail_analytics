@@ -61,13 +61,13 @@ terminating_flows <- function()
   revised_packets[(session_flow_id %in% terminating_flow_ids), terminating_flow := TRUE]
   revised_packets[(is.na(terminating_flow)), terminating_flow := FALSE]
   
-  #setkey(revised_packets, session_flow_id)
   setkey(revised_packets, session_id, flow_id)
   flow_summaries <- revised_packets[, list(n_packets = length(Rx), direction = unique(Direction),  
                                            total_bytes = get_total_bytes(.SD),
                                            terminating_flow = unique(terminating_flow),
                                            avg_packets_last_k_flows = get_avg_packets_last_k_flows(.SD, 2, revised_packets), 
-                                           median_bytes_per_packet = get_median_bytes_per_packet(.SD)),
+                                           median_bytes_per_packet = get_median_bytes_per_packet(.SD),
+                                           matches_dominant_direction_for_session = get_matches_dominant_direction_for_session(.SD, revised_packets)),
                                            by = list(session_id, flow_id), 
                                            .SDcols = c("Direction", "Rx", "Tx", "terminating_flow", "session_id", "flow_id", "LocalTime")]
                                            
@@ -92,10 +92,12 @@ prepare_data_for_detecting_endtimes <- function(flow_summary_file)
 {
   flow_summaries <- fread(flow_summary_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                            colClasses = c("numeric", "numeric", "numeric", "character", 
-                                          "numeric", "character", "numeric", "numeric", "numeric"),
+                                          "numeric", "character", "numeric", "numeric", 
+                                          "character", "numeric"),
                            data.table = TRUE)
   flow_summaries$terminating_flow <- as.factor(flow_summaries$terminating_flow)
   flow_summaries$direction <- as.factor(flow_summaries$direction)
+  flow_summaries$matches_dominant_direction_for_session <- as.factor(flow_summaries$matches_dominant_direction_for_session)
   flow_summaries
 }
 
@@ -122,6 +124,38 @@ classify_flows_random_forest <- function(training_data, test_data)
   print(prec_recall)
   
   #Measure overall accuracy
+  setkey(test_data, terminating_flow, predicted_terminating_flow)
+  accuracy <- nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data)
+  recall <- prec_recall[2,2]/sum(prec_recall[2,])
+  precision <- prec_recall[2,2]/sum(prec_recall[,2])
+  cat(paste("Overall accuracy = ", accuracy, ", recall = ", recall, ", precision = ", precision, "\n\n", sep = "")) 
+  
+  list(accuracy = accuracy, recall = recall, precision = precision)
+}
+
+classify_flows_svm <- function(training_data, test_data)
+{
+  cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
+  
+  print(table(training_data$terminating_flow)) 
+  print(table(test_data$terminating_flow))
+  
+  cols <- c("terminating_flow", "session_id", "flow_id", "direction")                           
+  tune.out = tune.svm(training_data[, .SD, .SDcols = -cols], training_data$terminating_flow, kernel = "radial", 
+                      cost = c(0.001, 0.01, 0.1, 1, 10, 100, 1000), gamma = c(0.125, 0.25, 0.5, 1, 2, 3, 4, 5))
+  print(summary(tune.out))
+  bestmod <- tune.out$best.model
+  
+  test_data_terminating_flow <- test_data[, terminating_flow] #Retain this before dropping as we will need it for contingency table
+  test_data <- test_data[, .SD, .SDcols = -cols]
+  test_data[, predicted_terminating_flow := as.character(predict(bestmod, newdata = test_data))]
+
+  prec_recall <- table(test_data_terminating_flow, test_data[, predicted_terminating_flow], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  #Restore back terminating_flow in test_data
+  test_data[, terminating_flow := test_data_terminating_flow]
   setkey(test_data, terminating_flow, predicted_terminating_flow)
   accuracy <- nrow(test_data[(terminating_flow == predicted_terminating_flow),])/nrow(test_data)
   recall <- prec_recall[2,2]/sum(prec_recall[2,])
@@ -212,4 +246,21 @@ get_median_bytes_per_packet <- function(dt)
 {
   bytes_per_packet <- c(dt$Tx, dt$Rx)
   median(bytes_per_packet[bytes_per_packet > 0])
+}
+
+#Sometimes, the traffic in a session contains most bytes in either upstream or downstream flows, and in such sessions, the terminating flows are in a direction opposite to the 
+#direction in which most of the traffic flows. Check whether the direction of a flow matches with the dominant direction for the session.
+get_matches_dominant_direction_for_session <- function(dt, revised_packets)
+{
+  this_session_id <- dt[1, session_id]
+  setkey(revised_packets, session_id)
+  pkts_this_session <- revised_packets[(session_id == this_session_id),]
+  print(pkts_this_session)
+  setkey(pkts_this_session, Direction)
+  bytes_in_directions <- pkts_this_session[, list(bytes_this_direction = sum(Tx) + sum(Rx)), by = Direction]
+  bytes_in_directions <- bytes_in_directions[order(-bytes_this_direction),]
+  print(bytes_in_directions)
+  dominant_direction <- bytes_in_directions[1, Direction]
+  this_direction <- dt[1, Direction]
+  (dominant_direction == this_direction)
 }
