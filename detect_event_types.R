@@ -10,30 +10,50 @@ lookup_event <- function(LocalTime, events)
   matching_row[, Event]
 }
  
+#Sample balancing for arbitrary number of classes
+
 create_bs_by_over_and_undersampling <- function(df)
 {
   n_df <- nrow(df)
-  size_each_part <- n_df/2
-
-  majority_set <- df[(end_of_event == FALSE),]
-  n_majority <- nrow(majority_set)
-  cat(paste("n_majority = ", n_majority, ", n_df = ", n_df, ", size_each_part = ", size_each_part, "\n", sep = ""))
-  sample_majority_ind <- sample(1:n_majority, size_each_part, replace = FALSE)
-  sample_majority <- majority_set[sample_majority_ind, ]
-    
-  minority_set <- df[(end_of_event == TRUE),]
-  n_minority <- nrow(minority_set)
-  rep_times <- size_each_part%/%nrow(minority_set)
-  oversampled_minority_set <- minority_set
-  for (i in 1:(rep_times - 1))
+  classes <- unique(df$Event)
+  n_classes <- length(classes)
+  size_each_part <- round(n_df/n_classes)
+  cat(paste("n_classes = ", n_classes, ", size_each_part = ", size_each_part, "\n", sep = ""))
+  bal_df <- data.table()
+  setkey(df, Event)
+  
+  for (i in 1:n_classes)
   {
-    oversampled_minority_set <- rbindlist(list(oversampled_minority_set, minority_set))
+     this_set <- df[(Event == classes[i]),]
+     n_this_set <- nrow(this_set)
+     if (n_this_set >= size_each_part)
+     {
+       #undersample
+       cat(paste("classes[i] = ", classes[i], ", n_this_set = ", n_this_set, ", undersample\n", sep = ""))
+       sample_ind <- sample(1:n_this_set, size_each_part, replace = FALSE)
+       sample_from_this_set <- this_set[sample_ind, ]
+       bal_df <- rbindlist(list(bal_df, sample_from_this_set))
+     }
+     else
+     {
+       
+       rep_times <- size_each_part%/%n_this_set
+       cat(paste("classes[i] = ", classes[i], ", n_this_set = ", n_this_set, ", rep_times = ", rep_times, ", oversample\n", sep = ""))
+       oversampled_set <- this_set
+       if (rep_times >= 2)
+       {
+         for (i in 1:(rep_times - 1))
+         {
+           oversampled_set <- rbindlist(list(oversampled_set, this_set))
+         }
+       }
+       rem_sample_id <- sample(1:n_this_set, size_each_part%%n_this_set, replace = FALSE)
+       rem_sample <- this_set[rem_sample_id, ]
+       oversampled_set <- rbindlist(list(oversampled_set, rem_sample))
+       bal_df <- rbindlist(list(bal_df, oversampled_set))
+     }
   }
-  rem_sample_id <- sample(1:n_minority, size_each_part%%nrow(minority_set), replace = FALSE)
-  rem_sample <- minority_set[rem_sample_id, ]
-  oversampled_minority_set <- rbindlist(list(oversampled_minority_set, rem_sample))
-
-  bal_df <- rbindlist(list(sample_majority, oversampled_minority_set))
+  bal_df
 }
 
 prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events_file, hidden_and_vis_states_file)
@@ -107,6 +127,8 @@ classify_packets_random_forest <- function()
   setkey(training_data, Event)
   training_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down")), Event := "Other"]
   training_data$Event <- droplevels(training_data$Event)
+  
+  training_data <- create_bs_by_over_and_undersampling(training_data)
   
   test_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
                                                       "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
