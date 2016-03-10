@@ -8,8 +8,8 @@ library(randomForest)
   
 terminating_flows <- function()
 {
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv"
   revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
@@ -20,8 +20,8 @@ terminating_flows <- function()
   revised_packets <- revised_packets[(DomainName %in% c("upload.twitter.com", "syndication.twitter.com", "twitter.com")),]
         
   #Get the event corresponding to each transaction
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
@@ -78,8 +78,8 @@ terminating_flows <- function()
   
   setkey(flow_summaries, session_id, flow_id)
   flow_summaries <- flow_summaries[order(session_id, flow_id),]
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/flow_summaries.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/flow_summaries.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/flow_summaries.csv"
   write.table(flow_summaries, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
   
   setkey(flow_summaries, terminating_flow)
@@ -157,7 +157,6 @@ run_ml <- function(n_trials = 10)
   cat(paste("Mean accuracy = ", round(mean(results$accuracy), 4), ", dispersion = ", round(sd(results$accuracy), 4),
             ", mean recall = ", round(mean(results$recall), 4), ", dispersion = ", round(sd(results$recall),4),
             ", mean precision = ", round(mean(results$precision),4), ", dispersion = ", round(sd(results$precision),4), "\n", sep = ""))
-  ret_obj[["model"]]
 }
 
 
@@ -225,8 +224,9 @@ get_median_bytes_per_packet <- function(dt)
 get_matches_dominant_direction_for_session <- function(dt, revised_packets)
 {
   this_session_id <- dt[1, session_id]
-  setkey(revised_packets, session_id)
-  pkts_this_session <- revised_packets[(session_id == this_session_id),]
+  this_flow_id <- dt[1, flow_id]
+  setkey(revised_packets, session_id, flow_id)
+  pkts_this_session <- revised_packets[((session_id == this_session_id) & (flow_id <= this_flow_id)),]
   setkey(pkts_this_session, Direction)
   bytes_in_directions <- pkts_this_session[, list(bytes_this_direction = sum(Tx) + sum(Rx)), by = Direction]
   bytes_in_directions <- bytes_in_directions[order(-bytes_this_direction),]
@@ -239,14 +239,15 @@ get_matches_dominant_direction_for_session <- function(dt, revised_packets)
 get_median_bytes_dominant_direction_for_session <- function(dt, revised_packets)
 {
   this_session_id <- dt[1, session_id]
-  setkey(revised_packets, session_id)
-  pkts_this_session <- revised_packets[(session_id == this_session_id),]
+  this_flow_id <- dt[1, flow_id]
+  setkey(revised_packets, session_id, flow_id)
+  pkts_this_session <- revised_packets[((session_id == this_session_id) & (flow_id <= this_flow_id)),]
   setkey(pkts_this_session, Direction)
   bytes_in_directions <- pkts_this_session[, list(bytes_this_direction = sum(Tx) + sum(Rx)), by = Direction]
   bytes_in_directions <- bytes_in_directions[order(-bytes_this_direction),]
   dominant_direction <- bytes_in_directions[1, Direction]
   
-  pkts_dominant_direction <- revised_packets[(Direction == dominant_direction),]
+  pkts_dominant_direction <- revised_packets[((Direction == dominant_direction) & (session_id == this_session_id) & (flow_id <= this_flow_id)),]
   bytes_per_packet <- c(pkts_dominant_direction$Tx, pkts_dominant_direction$Rx)
   median(bytes_per_packet[bytes_per_packet > 0])
 }
