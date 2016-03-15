@@ -210,6 +210,74 @@ classify_packets_random_forest <- function()
   bestmod
 }
 
+
+classify_packets_naive_bayes <- function()
+{
+  training_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv", 
+                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv",
+                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv")
+  cat("Original distribution of training data\n")
+  print(table(training_data$Event))  
+                                                         
+  #Merge the minor categories of events in training data into one
+  setkey(training_data, Event)
+  training_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down")), Event := "Other"]
+  training_data$Event <- droplevels(training_data$Event)
+  
+  cat("\nDistribution of training data after merging the minor categories...writing to the file\n")
+  print(table(training_data$Event))  
+  
+  #Merge Reply_Tweet_Text_and_Image and Tweet+Image
+  training_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
+  training_data$Event <- droplevels(training_data$Event)
+  
+  cat("\nDistribution of training data after merging Reply_Tweet_Text_and_Image and Tweet+Image\n")
+  print(table(training_data$Event))  
+  
+  #Doing sample balancing or not does not influence the performance of NB much
+  
+  test_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
+                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
+                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv")
+                                                      
+  #Merge the minor categories of events in test data into one
+  setkey(test_data, Event)
+  test_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
+  test_data$Event <- droplevels(test_data$Event)
+  
+  #Merge Reply_Tweet_Text_and_Image and Tweet+Image
+  test_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
+  test_data$Event <- droplevels(test_data$Event)
+  
+  levels(test_data$DomainName) <- levels(training_data$DomainName)
+  levels(test_data$Direction) <- levels(training_data$Direction)
+  levels(test_data$majority_domain) <- levels(training_data$majority_domain)
+  
+  cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
+  
+  cat("\nDistribution of test data\n")
+  print(table(test_data$Event))
+  
+  #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
+  #frac_upstream_packets.
+  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")  
+  
+  bestmod <- naiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols])
+  
+  test_data[, predicted_event := as.character(predict(bestmod, newdata = test_data, type = "class"))]
+  
+  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  setkey(test_data, Event, predicted_event)
+  accuracy <- nrow(test_data[(Event == predicted_event),])/nrow(test_data)
+  cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = "")) 
+  measure_precision_recall(prec_recall)
+  
+  bestmod
+}
+
 principal_component <- function()
 {
   library(ggplot2)
