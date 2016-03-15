@@ -210,6 +210,47 @@ classify_packets_random_forest <- function()
   bestmod
 }
 
+principal_component <- function()
+{
+  library(ggplot2)
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
+  training_data <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("Date", "character", "character", "numeric", "character", 
+                                   "numeric", "numeric", "numeric", "numeric",  "numeric", "numeric", "character",
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
+                    data.table = TRUE)
+
+  Event <- training_data$Event
+  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes", "majority_domain", "DomainName", "Direction", "Event")
+  training_data <- training_data[, .SD, .SDcols = -cols]
+  
+  training_data <- as.data.frame(training_data)
+  
+  #Drop columns with variance 0 as that presents a problem in scaling
+  training_data <- training_data[, apply(training_data, 2, var, na.rm=TRUE) != 0]
+  
+  pc <- prcomp(training_data, scale = TRUE)
+  
+  #The first 4 PCs explain 92.4% of variance in total. Reply_Tweet_Text_and_Image + Tweet+Image are sort of on the left of the figure, and 
+  #Uploading_Image is mostly on the right and center. However, at the center, Uploading_Image is pretty mixed up with ReTweet, Tweet_Only and Reply_Tweet_Text_Only, 
+  #perhaps that is why these classes get falsely labeled as Uploading_Image so often.
+  
+  projected <- as.data.frame(pc$x[, c("PC1", "PC2")])
+  projected$Event <- as.factor(Event)
+
+  #Anomalous on the right, benign on the left
+  png("./figures/events_first_two_pc.png",  width = 600, height = 480, units = "px")
+  projected <- data.frame(projected)
+  p <- ggplot(projected, aes(x = PC1, y = PC2)) + geom_point(aes(colour = Event), size = 2) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold')) + 
+         ggtitle("Projections along first two PCs for events")
+  print(p)
+  dev.off()
+  pc
+}
+
 analyze_training_data <- function()
 {
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
