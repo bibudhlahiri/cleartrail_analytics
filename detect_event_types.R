@@ -130,8 +130,15 @@ classify_packets_random_forest <- function()
   cat("\nDistribution of training data after merging the minor categories...writing to the file\n")
   print(table(training_data$Event))  
   
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
-  write.table(training_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  #Merge Reply_Tweet_Text_and_Image and Tweet+Image
+  training_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
+  training_data$Event <- droplevels(training_data$Event)
+  
+  cat("\nDistribution of training data after merging Reply_Tweet_Text_and_Image and Tweet+Image\n")
+  print(table(training_data$Event))  
+  
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
+  #write.table(training_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
   
   training_data <- create_bs_by_over_and_undersampling(training_data)
   
@@ -142,6 +149,10 @@ classify_packets_random_forest <- function()
   #Merge the minor categories of events in test data into one
   setkey(test_data, Event)
   test_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
+  test_data$Event <- droplevels(test_data$Event)
+  
+  #Merge Reply_Tweet_Text_and_Image and Tweet+Image
+  test_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
   test_data$Event <- droplevels(test_data$Event)
   
   levels(test_data$DomainName) <- levels(training_data$DomainName)
@@ -157,8 +168,7 @@ classify_packets_random_forest <- function()
   
   #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
   #frac_upstream_packets.
-  cols <- c("LocalTime", "session_id"
-           #, "frac_downstream_packets", "frac_downstream_bytes"
+  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes"
            # , "n_downstream_packets", #highly correlated with downstream_bytes
            # "total_bytes", #highly correlated with n_packets
            # "n_upstream_packets", #highly correlated with upstream_bytes
@@ -166,7 +176,7 @@ classify_packets_random_forest <- function()
            # "frac_upstream_bytes", #highly correlated with avg_upstream_bytes_per_packet
            # "downstream_bytes" #highly correlated with total_bytes
           )
-  #n_features <- ncol(training_data) - length(cols) - 1
+  n_features <- ncol(training_data) - length(cols) - 1
   #tune.out <- tune.randomForest(Event ~ ., data = training_data[, .SD, .SDcols = -cols], ntree = c(500, 1000), nodesize = seq(10, 30, 10), mtry = seq(floor(sqrt(n_features)), n_features, 2))
   #print(tune.out)
   #bestmod <- tune.out$best.model
@@ -193,79 +203,9 @@ classify_packets_random_forest <- function()
   #cols <- c("LocalTime", "session_id", "Event")
   #tuneRF(training_data[, .SD, .SDcols = -cols], training_data$Event, stepFactor = 1.5)
   
-  cols <- c("LocalTime", "session_id", "Event")
-  result <- rfcv(training_data[, .SD, .SDcols = -cols], training_data$Event, cv.fold=3)
-  with(result, plot(n.var, error.cv, log = "x", type = "o", lwd = 2)) #Lowest CV error when all 21 features are used: this is probably because none of the features is very powerful by itself
-  
-  bestmod
-}
-
-
-classify_packets_cforest <- function()
-{
-  training_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv", 
-                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv",
-                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv")
-  cat("Original distribution of training data\n")
-  print(table(training_data$Event))  
-                                                         
-  #Merge the minor categories of events in training data into one
-  setkey(training_data, Event)
-  training_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down")), Event := "Other"]
-  training_data$Event <- droplevels(training_data$Event)
-  
-  cat("\nDistribution of training data after merging the minor categories...writing to the file\n")
-  print(table(training_data$Event))  
-  
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
-  write.table(training_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-  
-  training_data <- create_bs_by_over_and_undersampling(training_data)
-  
-  test_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
-                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
-                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv")
-                                                      
-  #Merge the minor categories of events in test data into one
-  setkey(test_data, Event)
-  test_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
-  test_data$Event <- droplevels(test_data$Event)
-  
-  levels(test_data$DomainName) <- levels(training_data$DomainName)
-  levels(test_data$Direction) <- levels(training_data$Direction)
-  levels(test_data$majority_domain) <- levels(training_data$majority_domain)
-  
-  cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
-  
-  cat("\nDistribution of training data after sample balancing\n")
-  print(table(training_data$Event)) 
-  cat("\nDistribution of test data\n")
-  print(table(test_data$Event))
-  
-  #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
-  #frac_upstream_packets.
-  cols <- c("LocalTime", "session_id"
-           #, "frac_downstream_packets", "frac_downstream_bytes"
-           # , "n_downstream_packets", #highly correlated with downstream_bytes
-           # "total_bytes", #highly correlated with n_packets
-           # "n_upstream_packets", #highly correlated with upstream_bytes
-           # "frac_upstream_packets", #highly correlated with frac_upstream_bytes
-           # "frac_upstream_bytes", #highly correlated with avg_upstream_bytes_per_packet
-           # "downstream_bytes" #highly correlated with total_bytes
-          )
-  
-  bestmod <- cforest(Event ~ ., data = training_data[, .SD, .SDcols = -cols])
-   
-  test_data[, predicted_event := as.character(predict(bestmod, newdata = test_data, type = "response"))]
-  
-  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
-  print(prec_recall)
-  
-  #Measure overall accuracy
-  setkey(test_data, Event, predicted_event)
-  accuracy <- nrow(test_data[(Event == predicted_event),])/nrow(test_data)
-  cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = "")) 
-  measure_precision_recall(prec_recall)
+  #cols <- c("LocalTime", "session_id", "Event")
+  #result <- rfcv(training_data[, .SD, .SDcols = -cols], training_data$Event, cv.fold=3)
+  #with(result, plot(n.var, error.cv, log = "x", type = "o", lwd = 2)) #Lowest CV error when all 21 features are used: this is probably because none of the features is very powerful by itself
   
   bestmod
 }
