@@ -2,7 +2,6 @@ library(data.table)
 library(rpart)
 library(e1071)
 library(randomForest)
-library(party)
 library(klaR)
 
 lookup_event <- function(LocalTime, events)
@@ -115,7 +114,7 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
 }
 
 
-classify_packets_random_forest <- function()
+prepare_training_and_test_data <- function()
 {
   training_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv", 
                                                           "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv",
@@ -128,44 +127,66 @@ classify_packets_random_forest <- function()
   training_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down")), Event := "Other"]
   training_data$Event <- droplevels(training_data$Event)
   
-  cat("\nDistribution of training data after merging the minor categories...writing to the file\n")
+  cat("\nDistribution of training data after merging the minor categories\n")
   print(table(training_data$Event))  
   
   #Merge Reply_Tweet_Text_and_Image and Tweet+Image
-  #training_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
-  #training_data$Event <- droplevels(training_data$Event)
+  training_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
+  training_data$Event <- droplevels(training_data$Event)
   
-  #cat("\nDistribution of training data after merging Reply_Tweet_Text_and_Image and Tweet+Image\n")
-  #print(table(training_data$Event))  
+  cat("\nDistribution of training data after merging Reply_Tweet_Text_and_Image and Tweet+Image\n")
+  print(table(training_data$Event))  
   
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
-  #write.table(training_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  training_data <- training_data[!(Event == "Uploading_Image"),] 
   
-  #training_data <- create_bs_by_over_and_undersampling(training_data)
+  training_data[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
+  training_data$Event <- droplevels(training_data$Event)
+  
+  cat("\nDistribution of training data after deleting Uploading_Image, and merging Reply_Tweet_Text_Only, ReTweet and Tweet_Only...writing to the file\n")
+  print(table(training_data$Event))
+  
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
+  write.table(training_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
   
   test_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
                                                       "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
                                                       "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv")
-                                                      
+  
+  cat("Original distribution of test data\n")
+  print(table(test_data$Event)) 
+                                                   
   #Merge the minor categories of events in test data into one
   setkey(test_data, Event)
   test_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
   test_data$Event <- droplevels(test_data$Event)
   
   #Merge Reply_Tweet_Text_and_Image and Tweet+Image
-  #test_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
-  #test_data$Event <- droplevels(test_data$Event)
+  test_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
+  test_data$Event <- droplevels(test_data$Event)
+  
+  cat("\nDistribution of test data after merging Reply_Tweet_Text_and_Image and Tweet+Image\n")
+  print(table(test_data$Event))  
+  
+  test_data[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
+  test_data$Event <- droplevels(test_data$Event)
+  
+  cat("\nDistribution of test data after merging Reply_Tweet_Text_Only, ReTweet and Tweet_Only\n")
+  print(table(test_data$Event))
   
   levels(test_data$DomainName) <- levels(training_data$DomainName)
   levels(test_data$Direction) <- levels(training_data$Direction)
   levels(test_data$majority_domain) <- levels(training_data$majority_domain)
   
   cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
-  
-  cat("\nDistribution of training data after sample balancing\n")
-  print(table(training_data$Event)) 
-  cat("\nDistribution of test data\n")
-  print(table(test_data$Event))
+  list(training_data = training_data, test_data = test_data)
+}
+
+
+classify_packets_random_forest <- function()
+{
+  ret_obj <- prepare_training_and_test_data()
+  training_data <- ret_obj[["training_data"]]
+  test_data <- ret_obj[["test_data"]]
   
   #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
   #frac_upstream_packets.
@@ -197,50 +218,9 @@ classify_packets_random_forest <- function()
 #http://stats.stackexchange.com/questions/61034/naive-bayes-on-continuous-variables
 classify_packets_naive_bayes <- function()
 {
-  training_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv", 
-                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv",
-                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv")
-  cat("Original distribution of training data\n")
-  print(table(training_data$Event))  
-                                                         
-  #Merge the minor categories of events in training data into one
-  setkey(training_data, Event)
-  training_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down")), Event := "Other"]
-  training_data$Event <- droplevels(training_data$Event)
-  
-  cat("\nDistribution of training data after merging the minor categories...writing to the file\n")
-  print(table(training_data$Event))  
-  
-  #Merge Reply_Tweet_Text_and_Image and Tweet+Image
-  training_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
-  training_data$Event <- droplevels(training_data$Event)
-  
-  cat("\nDistribution of training data after merging Reply_Tweet_Text_and_Image and Tweet+Image\n")
-  print(table(training_data$Event))  
-  
-  #Doing sample balancing or not does not influence the performance of NB much
-  
-  test_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
-                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
-                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv")
-                                                      
-  #Merge the minor categories of events in test data into one
-  setkey(test_data, Event)
-  test_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
-  test_data$Event <- droplevels(test_data$Event)
-  
-  #Merge Reply_Tweet_Text_and_Image and Tweet+Image
-  test_data[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
-  test_data$Event <- droplevels(test_data$Event)
-  
-  levels(test_data$DomainName) <- levels(training_data$DomainName)
-  levels(test_data$Direction) <- levels(training_data$Direction)
-  levels(test_data$majority_domain) <- levels(training_data$majority_domain)
-  
-  cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
-  
-  cat("\nDistribution of test data\n")
-  print(table(test_data$Event))
+  ret_obj <- prepare_training_and_test_data()
+  training_data <- ret_obj[["training_data"]]
+  test_data <- ret_obj[["test_data"]]
   
   #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
   #frac_upstream_packets.
@@ -262,6 +242,92 @@ classify_packets_naive_bayes <- function()
   measure_precision_recall(prec_recall)
   
   bestmod
+}
+
+
+classify_packets_deep_learning <- function()
+{
+  library(h2o)
+  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, Xmx = '2g')
+                    
+  ret_obj <- prepare_training_and_test_data()
+  training_data <- ret_obj[["training_data"]]
+  test_data <- ret_obj[["test_data"]]
+  
+  cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes")
+  features <- names(training_data) 
+  features <- features[!(features %in% cols)]
+  
+  training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
+  model <- h2o.deeplearning(x = features, 
+                            y = "Event", 
+                            training_frame = training_data_h2o, 
+                            activation = "TanhWithDropout", 
+                            input_dropout_ratio = 0.2, 
+                            hidden_dropout_ratios = c(0.5,0.5,0.5), 
+                            balance_classes = TRUE, 
+                            hidden = c(50,50,50), # three layers of 50 nodes
+                            epochs = 100) # max. no. of epochs
+
+  test_data_h2o <- as.h2o(test_data, destination_frame = 'test_data')                       
+  h2o_yhat_test <- h2o.predict(model, test_data_h2o, type = "class")
+  df_yhat_test <- as.data.frame(h2o_yhat_test)
+  #h2o.shutdown()
+  
+  test_data[, predicted_event := as.character(df_yhat_test$predict)]
+  
+  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  setkey(test_data, Event, predicted_event)
+  accuracy <- nrow(test_data[(Event == predicted_event),])/nrow(test_data)
+  cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = ""))
+  measure_precision_recall(prec_recall)
+  model
+}
+
+#TODO: scale numeric features before sending through auto-encoders. Some 
+#features like avg_downstream_bytes_per_packet and downstream_bytes are getting very different 
+#values when reconstructed.
+
+detect_noise_deep_learning <- function(n_units_hidden_layer = 10)
+{
+  library(h2o)
+  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, Xmx = '2g')
+                    
+  ret_obj <- prepare_training_and_test_data()
+  training_data <- ret_obj[["training_data"]]
+  
+  cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes", 
+            "DomainName", "Direction", "majority_domain")
+  features <- names(training_data) 
+  features <- features[!(features %in% cols)]
+  
+  training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
+
+  #Train deep autoencoder learning model on training data, y ignored.
+  #We have 18 numeric features in the data. We should keep the hidden layer undercomplete, i.e., number of units in the hidden layer should 
+  #be less than the number of features in input data.
+  anomaly_model <- h2o.deeplearning(x = features,
+                                    training_frame = training_data_h2o, activation = "Tanh", autoencoder = TRUE,
+                                    hidden = c(n_units_hidden_layer), l1 = 1e-4, epochs = 100)
+
+  # Compute reconstruction error with the Anomaly
+  # detection app (MSE between output layer and input layer)
+  recon_error <- h2o.anomaly(anomaly_model, training_data_h2o)
+
+  # Pull reconstruction error data into R and
+  # plot to find outliers
+  recon_error <- as.data.frame(recon_error)
+  plot.ts(recon_error)
+  
+  # Note: Testing = Reconstructing the training dataset
+  training_recon <- h2o.predict(anomaly_model, training_data_h2o)
+  print(head(training_data_h2o))
+  print(head(training_recon))
+  
+  recon_error
 }
 
 principal_component <- function()
