@@ -298,16 +298,6 @@ classify_packets_deep_learning <- function(k = 5, n_units_hidden_layer_ae = 10)
   df_yhat_test <- as.data.frame(h2o_yhat_test)
   #h2o.shutdown()
   
-  
-  to_add_later <- test_data[, .SD, .SDcols = c("Event", "DomainName", "Direction", "majority_domain")]
-  
-  not_to_scale <- c("LocalTime", "session_id", "Event", "DomainName", "Direction", "majority_domain")
-  print(head(test_data[, .SD, .SDcols = -not_to_scale]))
-  test_data <- as.data.table(scale(test_data[, .SD, .SDcols = -not_to_scale]))
-  
-  test_data <- cbind(test_data, to_add_later)
-  print(head(test_data))
-  
   test_data[, predicted_event := as.character(df_yhat_test$predict)]
   
   prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
@@ -330,8 +320,7 @@ remove_noise_ae <- function(training_data, k = 5, n_units_hidden_layer = 10)
   features <- names(training_data) 
   features <- features[!(features %in% cols)]
   
-  #We are not updating training_data itself in the sense that we are not dropping off the columns from it. The argument to scale() is just temporary.
-  training_data_h2o <- as.h2o(scale(training_data[, .SD, .SDcols = features]), destination_frame = 'training_data')
+  training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
 
   #Train deep autoencoder learning model on training data, y ignored.
   #We have 18 numeric features in the data. We should keep the hidden layer undercomplete, i.e., number of units in the hidden layer should 
@@ -340,8 +329,7 @@ remove_noise_ae <- function(training_data, k = 5, n_units_hidden_layer = 10)
                                     training_frame = training_data_h2o, activation = "Tanh", autoencoder = TRUE,
                                     hidden = c(n_units_hidden_layer), l1 = 1e-4, epochs = 100)
 
-  # Compute reconstruction error with the Anomaly
-  # detection app (MSE between output layer and input layer)
+  # Compute reconstruction error with the anomaly detection app (MSE between output layer and input layer)
   recon_error <- h2o.anomaly(anomaly_model, training_data_h2o)  
   
   #Take off the training data points whose reconstruction error are in the highest k-th percentile
@@ -350,13 +338,10 @@ remove_noise_ae <- function(training_data, k = 5, n_units_hidden_layer = 10)
   cutoff <- quantile(recon_error$Reconstruction.MSE, c(1 - k/100))
   cat(paste("cutoff = ", cutoff, "\n", sep = ""))
   
-  #training_data <- as.data.table(training_data)
+  #We are not taking the reconstructed values of X. We are only removing those rows from X for which the reconstruction error are in the highest k-th percentile.
   training_data[, reconstruction_error := recon_error$Reconstruction.MSE]
-  print(head(training_data))
   setkey(training_data, reconstruction_error)
-  ret_obj <- training_data[(reconstruction_error <= cutoff),]
-  print(head(ret_obj))
-  ret_obj
+  training_data[(reconstruction_error <= cutoff),]
 }
 
 principal_component <- function()
