@@ -178,6 +178,21 @@ prepare_training_and_test_data <- function()
   levels(test_data$majority_domain) <- levels(training_data$majority_domain)
   
   cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
+  
+  if (FALSE)
+  {
+  
+  #Convert factors to numeric to feed through auto-encoder
+  
+  training_data$DomainName <- as.numeric(training_data$DomainName)
+  training_data$Direction <- as.numeric(training_data$Direction)
+  training_data$majority_domain <- as.numeric(training_data$majority_domain)
+  
+  test_data$DomainName <- as.numeric(test_data$DomainName)
+  test_data$Direction <- as.numeric(test_data$Direction)
+  test_data$majority_domain <- as.numeric(test_data$majority_domain)
+  }
+  
   list(training_data = training_data, test_data = test_data)
 }
 
@@ -245,7 +260,7 @@ classify_packets_naive_bayes <- function()
 }
 
 
-classify_packets_deep_learning <- function()
+classify_packets_deep_learning <- function(k = 5, n_units_hidden_layer_ae = 10)
 {
   library(h2o)
   localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, Xmx = '2g')
@@ -254,9 +269,18 @@ classify_packets_deep_learning <- function()
   training_data <- ret_obj[["training_data"]]
   test_data <- ret_obj[["test_data"]]
   
-  cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes")
+  #Keep the categorical features and the label aside while de-noising. Add them back later using the ID.
+  
+  training_data[, id := 1:nrow(training_data)]
+  cat(paste("\n", "nrow(training_data) before noise removal = ", nrow(training_data), "\n", sep = ""))
+  training_data <- remove_noise_ae(training_data)
+  
+  cat(paste("\n", "nrow(training_data) after noise removal = ", nrow(training_data), "\n", sep = ""))
+  
+  cols <- c("id", "LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes", "reconstruction_error")
   features <- names(training_data) 
   features <- features[!(features %in% cols)]
+  print(head(training_data))
   
   training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
   model <- h2o.deeplearning(x = features, 
@@ -274,6 +298,16 @@ classify_packets_deep_learning <- function()
   df_yhat_test <- as.data.frame(h2o_yhat_test)
   #h2o.shutdown()
   
+  
+  to_add_later <- test_data[, .SD, .SDcols = c("Event", "DomainName", "Direction", "majority_domain")]
+  
+  not_to_scale <- c("LocalTime", "session_id", "Event", "DomainName", "Direction", "majority_domain")
+  print(head(test_data[, .SD, .SDcols = -not_to_scale]))
+  test_data <- as.data.table(scale(test_data[, .SD, .SDcols = -not_to_scale]))
+  
+  test_data <- cbind(test_data, to_add_later)
+  print(head(test_data))
+  
   test_data[, predicted_event := as.character(df_yhat_test$predict)]
   
   prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
@@ -287,24 +321,17 @@ classify_packets_deep_learning <- function()
   model
 }
 
-#TODO: scale numeric features before sending through auto-encoders. Some 
-#features like avg_downstream_bytes_per_packet and downstream_bytes are getting very different 
-#values when reconstructed.
 
-detect_noise_deep_learning <- function(n_units_hidden_layer = 10)
+remove_noise_ae <- function(training_data, k = 5, n_units_hidden_layer = 10)
 {
-  library(h2o)
-  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, Xmx = '2g')
-                    
-  ret_obj <- prepare_training_and_test_data()
-  training_data <- ret_obj[["training_data"]]
-  
-  cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes", 
-            "DomainName", "Direction", "majority_domain")
+  cols <- c("id", "LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes"
+            , "DomainName", "Direction", "majority_domain"
+            )
   features <- names(training_data) 
   features <- features[!(features %in% cols)]
   
-  training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
+  #We are not updating training_data itself in the sense that we are not dropping off the columns from it. The argument to scale() is just temporary.
+  training_data_h2o <- as.h2o(scale(training_data[, .SD, .SDcols = features]), destination_frame = 'training_data')
 
   #Train deep autoencoder learning model on training data, y ignored.
   #We have 18 numeric features in the data. We should keep the hidden layer undercomplete, i.e., number of units in the hidden layer should 
@@ -315,19 +342,21 @@ detect_noise_deep_learning <- function(n_units_hidden_layer = 10)
 
   # Compute reconstruction error with the Anomaly
   # detection app (MSE between output layer and input layer)
-  recon_error <- h2o.anomaly(anomaly_model, training_data_h2o)
-
-  # Pull reconstruction error data into R and
-  # plot to find outliers
+  recon_error <- h2o.anomaly(anomaly_model, training_data_h2o)  
+  
+  #Take off the training data points whose reconstruction error are in the highest k-th percentile
   recon_error <- as.data.frame(recon_error)
-  plot.ts(recon_error)
+  print(fivenum(recon_error$Reconstruction.MSE))
+  cutoff <- quantile(recon_error$Reconstruction.MSE, c(1 - k/100))
+  cat(paste("cutoff = ", cutoff, "\n", sep = ""))
   
-  # Note: Testing = Reconstructing the training dataset
-  training_recon <- h2o.predict(anomaly_model, training_data_h2o)
-  print(head(training_data_h2o))
-  print(head(training_recon))
-  
-  recon_error
+  #training_data <- as.data.table(training_data)
+  training_data[, reconstruction_error := recon_error$Reconstruction.MSE]
+  print(head(training_data))
+  setkey(training_data, reconstruction_error)
+  ret_obj <- training_data[(reconstruction_error <= cutoff),]
+  print(head(ret_obj))
+  ret_obj
 }
 
 principal_component <- function()
