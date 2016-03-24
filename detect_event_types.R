@@ -179,19 +179,10 @@ prepare_training_and_test_data <- function()
   
   cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
   
-  if (FALSE)
-  {
-  
-  #Convert factors to numeric to feed through auto-encoder
-  
-  training_data$DomainName <- as.numeric(training_data$DomainName)
-  training_data$Direction <- as.numeric(training_data$Direction)
-  training_data$majority_domain <- as.numeric(training_data$majority_domain)
-  
-  test_data$DomainName <- as.numeric(test_data$DomainName)
-  test_data$Direction <- as.numeric(test_data$Direction)
-  test_data$majority_domain <- as.numeric(test_data$majority_domain)
-  }
+  cat(paste("\n", "nrow(training_data) before noise removal = ", nrow(training_data), "\n", sep = ""))
+  training_data <- remove_noise_ae(training_data)
+  training_data[, reconstruction_error := NULL]
+  cat(paste("\n", "nrow(training_data) after noise removal = ", nrow(training_data), "\n", sep = ""))
   
   list(training_data = training_data, test_data = test_data)
 }
@@ -269,18 +260,9 @@ classify_packets_deep_learning <- function(k = 5, n_units_hidden_layer_ae = 10)
   training_data <- ret_obj[["training_data"]]
   test_data <- ret_obj[["test_data"]]
   
-  #Keep the categorical features and the label aside while de-noising. Add them back later using the ID.
-  
-  training_data[, id := 1:nrow(training_data)]
-  cat(paste("\n", "nrow(training_data) before noise removal = ", nrow(training_data), "\n", sep = ""))
-  training_data <- remove_noise_ae(training_data)
-  
-  cat(paste("\n", "nrow(training_data) after noise removal = ", nrow(training_data), "\n", sep = ""))
-  
-  cols <- c("id", "LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes", "reconstruction_error")
+  cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes")
   features <- names(training_data) 
   features <- features[!(features %in% cols)]
-  print(head(training_data))
   
   training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
   model <- h2o.deeplearning(x = features, 
@@ -314,9 +296,8 @@ classify_packets_deep_learning <- function(k = 5, n_units_hidden_layer_ae = 10)
 
 remove_noise_ae <- function(training_data, k = 5, n_units_hidden_layer = 10)
 {
-  cols <- c("id", "LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes"
-            , "DomainName", "Direction", "majority_domain"
-            )
+  cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes"
+            , "DomainName", "Direction", "majority_domain")
   features <- names(training_data) 
   features <- features[!(features %in% cols)]
   
