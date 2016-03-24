@@ -132,9 +132,9 @@ prepare_training_and_test_data <- function()
   cat("\nDistribution of test data after merging Reply_Tweet_Text_Only, ReTweet and Tweet_Only\n")
   print(table(test_data$Event))
   
-  levels(test_data$DomainName) <- levels(training_data$DomainName)
+  #levels(training_data$DomainName) <- levels(test_data$DomainName)
   levels(test_data$Direction) <- levels(training_data$Direction)
-  levels(test_data$majority_domain) <- levels(training_data$majority_domain)
+  #levels(training_data$majority_domain) <- levels(test_data$majority_domain)
   
   cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
   
@@ -189,11 +189,8 @@ classify_packets_naive_bayes <- function()
   #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
   #frac_upstream_packets.
   cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")  
+  bestmod <- NaiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols], usekernel = TRUE, fL = 1) #Naive Bayes with distributions for continuous variables found by KDE
   
-  #bestmod <- naiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols]) #Naive Bayes with Gaussian distribution for continuous variables
-  bestmod <- NaiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols], usekernel = TRUE) #Naive Bayes with distributions for continuous variables found by KDE
-  
-  #test_data[, predicted_event := as.character(predict(bestmod, newdata = test_data, type = "class"))]
   test_data[, predicted_event := as.character((predict(bestmod, newdata = test_data))$class)]
   
   prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
@@ -322,88 +319,6 @@ principal_component <- function()
   print(p)
   dev.off()
   pc
-}
-
-
-#Pass the de-noised training data and the (noisy) test data through the RF, NB and DL classifiers and create features like 
-#rf_class, nb_class and dl_class from predicted labels. 
-
-prepare_data_for_stacking <- function()
-{
-  ret_obj <- prepare_training_and_test_data()
-  training_data <- ret_obj[["training_data"]]
-  test_data <- ret_obj[["test_data"]]
-  
-  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")
-  
-  rf_model <- randomForest(Event ~ ., data = training_data[, .SD, .SDcols = -cols])
-  training_data[, rf_class := as.character(predict(rf_model, newdata = training_data, type = "class"))]
-  test_data[, rf_class := as.character(predict(rf_model, newdata = test_data, type = "class"))]
-  
-  nb_model <- NaiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols], usekernel = TRUE) #Naive Bayes with distributions for continuous variables found by KDE
-  training_data[, nb_class := as.character((predict(nb_model, newdata = training_data))$class)]
-  test_data[, nb_class := as.character((predict(nb_model, newdata = test_data))$class)]
-  
-  library(h2o)
-  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, Xmx = '2g')
-  features <- names(training_data) 
-  features <- features[!(features %in% cols)]
-  
-  training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
-  model <- h2o.deeplearning(x = features, 
-                            y = "Event", 
-                            training_frame = training_data_h2o, 
-                            activation = "TanhWithDropout", 
-                            input_dropout_ratio = 0.2, 
-                            hidden_dropout_ratios = c(0.5,0.5,0.5), 
-                            balance_classes = TRUE, 
-                            hidden = c(50,50,50), 
-                            epochs = 100)
-
-  h2o_yhat_training <- h2o.predict(model, training_data_h2o, type = "class")
-  df_yhat_training <- as.data.frame(h2o_yhat_training)
-  training_data[, dl_class := as.character(df_yhat_training$predict)]
-  
-  test_data_h2o <- as.h2o(test_data, destination_frame = 'test_data')                       
-  h2o_yhat_test <- h2o.predict(model, test_data_h2o, type = "class")
-  df_yhat_test <- as.data.frame(h2o_yhat_test)
-  test_data[, dl_class := as.character(df_yhat_test$predict)]
-  
-  print(head(training_data))
-  print(head(test_data))
-  
-  training_data$rf_class <- as.factor(training_data$rf_class)
-  training_data$nb_class <- as.factor(training_data$nb_class)
-  training_data$dl_class <- as.factor(training_data$dl_class)
-  
-  test_data$rf_class <- as.factor(test_data$rf_class)
-  test_data$nb_class <- as.factor(test_data$nb_class)
-  test_data$dl_class <- as.factor(test_data$dl_class)
-  
-  list(training_data = training_data, test_data = test_data)
-}
-
-#Perform the actual stacking
-
-apply_stacking <- function()
-{
-  ret_obj <- prepare_data_for_stacking()
-  training_data <- ret_obj[["training_data"]]
-  test_data <- ret_obj[["test_data"]]
-  
-  bestmod <- randomForest(Event ~ rf_class + nb_class + dl_class, data = training_data, usekernel = TRUE)
-  test_data[, predicted_event := as.character(predict(bestmod, newdata = test_data, type = "class"))]
-  
-  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
-  print(prec_recall)
-  
-  #Measure overall accuracy
-  setkey(test_data, Event, predicted_event)
-  accuracy <- nrow(test_data[(Event == predicted_event),])/nrow(test_data)
-  cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = "")) 
-  measure_precision_recall(prec_recall)
-  
-  bestmod 
 }
 
 measure_precision_recall <- function(prec_recall)
