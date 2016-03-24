@@ -11,47 +11,6 @@ lookup_event <- function(LocalTime, events)
   matching_row[, Event]
 }
  
-#Sample balancing for arbitrary number of classes
-
-create_bs_by_over_and_undersampling <- function(df)
-{
-  n_df <- nrow(df)
-  classes <- unique(df$Event)
-  n_classes <- length(classes)
-  size_each_part <- round(n_df/n_classes)
-  bal_df <- data.table()
-  setkey(df, Event)
-  
-  for (i in 1:n_classes)
-  {
-     this_set <- df[(Event == classes[i]),]
-     n_this_set <- nrow(this_set)
-     if (n_this_set >= size_each_part)
-     {
-       #undersample
-       sample_ind <- sample(1:n_this_set, size_each_part, replace = FALSE)
-       sample_from_this_set <- this_set[sample_ind, ]
-       bal_df <- rbindlist(list(bal_df, sample_from_this_set))
-     }
-     else
-     {
-       rep_times <- size_each_part%/%n_this_set
-       oversampled_set <- this_set
-       if (rep_times >= 2)
-       {
-         for (i in 1:(rep_times - 1))
-         {
-           oversampled_set <- rbindlist(list(oversampled_set, this_set))
-         }
-       }
-       rem_sample_id <- sample(1:n_this_set, size_each_part%%n_this_set, replace = FALSE)
-       rem_sample <- this_set[rem_sample_id, ]
-       oversampled_set <- rbindlist(list(oversampled_set, rem_sample))
-       bal_df <- rbindlist(list(bal_df, oversampled_set))
-     }
-  }
-  bal_df
-}
 
 prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events_file, hidden_and_vis_states_file)
 {
@@ -197,7 +156,6 @@ classify_packets_random_forest <- function()
   #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
   #frac_upstream_packets.
   cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")
-  n_features <- ncol(training_data) - length(cols) - 1
   
   bestmod <- randomForest(Event ~ ., data = training_data[, .SD, .SDcols = -cols])
   
@@ -366,29 +324,86 @@ principal_component <- function()
   pc
 }
 
-analyze_training_data <- function()
+
+#Pass the de-noised training data and the (noisy) test data through the RF, NB and DL classifiers and create features like 
+#rf_class, nb_class and dl_class from predicted labels. 
+
+prepare_data_for_stacking <- function()
 {
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
-  training_data <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("Date", "character", "character", "numeric", "character", 
-                                   "numeric", "numeric", "numeric", "numeric",  "numeric", "numeric", "character",
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", 
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
-                    data.table = TRUE)
-  cols <- c("LocalTime", "DomainName", "Direction", "session_id", "Event", "majority_domain")
-  cor_matrix <- cor(training_data[, .SD, .SDcols = -cols])
-  df <- as.data.frame(cor_matrix)
-  df <- cbind(variable1 = rownames(df), df)
-  rownames(df) <- NULL
-  mdata <- melt(df, id=c("variable1"))
-  mdata <- subset(mdata, ((value > 0.9) & (value < 1)))
-  colnames(mdata) <- c("variable1", "variable2", "correlation")
-  mdata <- mdata[rev(order(mdata$correlation)),]
-  mdata <- mdata[(seq(1, nrow(mdata), 2)),]
+  ret_obj <- prepare_training_and_test_data()
+  training_data <- ret_obj[["training_data"]]
+  test_data <- ret_obj[["test_data"]]
   
-  cat(paste("length(unique(training_data$total_bytes)) = ", length(unique(training_data$total_bytes)), 
-            ", length(unique(training_data$pkt_bytes)) = ", length(unique(training_data$pkt_bytes)), "\n", sep = ""))
-  mdata
+  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")
+  
+  rf_model <- randomForest(Event ~ ., data = training_data[, .SD, .SDcols = -cols])
+  training_data[, rf_class := as.character(predict(rf_model, newdata = training_data, type = "class"))]
+  test_data[, rf_class := as.character(predict(rf_model, newdata = test_data, type = "class"))]
+  
+  nb_model <- NaiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols], usekernel = TRUE) #Naive Bayes with distributions for continuous variables found by KDE
+  training_data[, nb_class := as.character((predict(nb_model, newdata = training_data))$class)]
+  test_data[, nb_class := as.character((predict(nb_model, newdata = test_data))$class)]
+  
+  library(h2o)
+  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, Xmx = '2g')
+  features <- names(training_data) 
+  features <- features[!(features %in% cols)]
+  
+  training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
+  model <- h2o.deeplearning(x = features, 
+                            y = "Event", 
+                            training_frame = training_data_h2o, 
+                            activation = "TanhWithDropout", 
+                            input_dropout_ratio = 0.2, 
+                            hidden_dropout_ratios = c(0.5,0.5,0.5), 
+                            balance_classes = TRUE, 
+                            hidden = c(50,50,50), 
+                            epochs = 100)
+
+  h2o_yhat_training <- h2o.predict(model, training_data_h2o, type = "class")
+  df_yhat_training <- as.data.frame(h2o_yhat_training)
+  training_data[, dl_class := as.character(df_yhat_training$predict)]
+  
+  test_data_h2o <- as.h2o(test_data, destination_frame = 'test_data')                       
+  h2o_yhat_test <- h2o.predict(model, test_data_h2o, type = "class")
+  df_yhat_test <- as.data.frame(h2o_yhat_test)
+  test_data[, dl_class := as.character(df_yhat_test$predict)]
+  
+  print(head(training_data))
+  print(head(test_data))
+  
+  training_data$rf_class <- as.factor(training_data$rf_class)
+  training_data$nb_class <- as.factor(training_data$nb_class)
+  training_data$dl_class <- as.factor(training_data$dl_class)
+  
+  test_data$rf_class <- as.factor(test_data$rf_class)
+  test_data$nb_class <- as.factor(test_data$nb_class)
+  test_data$dl_class <- as.factor(test_data$dl_class)
+  
+  list(training_data = training_data, test_data = test_data)
+}
+
+#Perform the actual stacking
+
+apply_stacking <- function()
+{
+  ret_obj <- prepare_data_for_stacking()
+  training_data <- ret_obj[["training_data"]]
+  test_data <- ret_obj[["test_data"]]
+  
+  bestmod <- randomForest(Event ~ rf_class + nb_class + dl_class, data = training_data, usekernel = TRUE)
+  test_data[, predicted_event := as.character(predict(bestmod, newdata = test_data, type = "class"))]
+  
+  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
+  print(prec_recall)
+  
+  #Measure overall accuracy
+  setkey(test_data, Event, predicted_event)
+  accuracy <- nrow(test_data[(Event == predicted_event),])/nrow(test_data)
+  cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = "")) 
+  measure_precision_recall(prec_recall)
+  
+  bestmod 
 }
 
 measure_precision_recall <- function(prec_recall)
