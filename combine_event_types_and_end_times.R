@@ -1,4 +1,9 @@
 library(data.table)
+library(ggplot2)
+library(plyr)
+require(scales)
+library(grid)
+library(gridExtra)
 
 #Using data.frame
 temporal_aggregation <- function()
@@ -18,7 +23,6 @@ temporal_aggregation <- function()
                                               .SDcols=c("Event", "predicted_event")]
   cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) # 0.819230769230769
   
-  print(temporal_aggregate)
   #Aggregate start and end times based on temporal_aggregate
    
   n_temporal_aggregate <- nrow(temporal_aggregate)
@@ -61,27 +65,54 @@ get_majority_predicted_event <- function(dt)
   names(tt[which.max(tt)])
 }
 
-#http://stackoverflow.com/questions/20349929/stacked-bar-plot-in-r
 visualize_events <- function()
 {
-  dat <- read.table(text = "A   B   C   D   E   F    G
-1 480 780 431 295 670 360  190
-2 720 350 377 255 340 615  345
-3 460 480 179 560  60 735 1260
-4 220 240 876 789 820 100   75", header = TRUE)
+  image_file <- "~/cleartrail_analytics/figures/timeline_view.png"
+  
+  #Process the predicted events and timeline data
+  
+  start_end_event <- temporal_aggregation()
+  start_end_event <- as.data.table(start_end_event)
+  start_end_event$duration <- as.numeric(difftime(strptime(start_end_event$EndTime, "%H:%M:%S"), strptime(start_end_event$StartTime, "%H:%M:%S"), units = "secs")) + 1
+  start_end_event[, source := rep("Predicted", nrow(start_end_event))]
+  ylab_predicted <- paste("Time (in seconds since ", start_end_event[1, StartTime], ")\n", sep = "")
+  start_end_event[ ,`:=`(StartTime = NULL, EndTime = NULL)]
+  
+  #Process the actual events and timeline data
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
+  events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("character", "Date", "Date"),
+                    data.table = TRUE)
+  events[, StartTime := strftime(strptime(events$StartTime, "%H:%M:%S"), "%H:%M:%S")]
+  events[, EndTime := strftime(strptime(events$EndTime, "%H:%M:%S"), "%H:%M:%S")]
+  events[, Event := apply(events, 1, function(row) gsub(" ", "_", as.character(row["Event"])))]
+  events[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
+  events[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
+  events[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
+  events$duration <- as.numeric(difftime(strptime(events$EndTime, "%H:%M:%S"), strptime(events$StartTime, "%H:%M:%S"), units = "secs")) + 1
+  events[, source := rep("Actual", nrow(events))]
+  ylab_actual <- paste("Time (in seconds since ", events[1, StartTime], ")\n", sep = "")
+  events[ ,`:=`(StartTime = NULL, EndTime = NULL)]
+  
+  print(events)
+  print(start_end_event)
+  
+  
+  p1 <- ggplot(start_end_event, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_actual) + 
+        theme(panel.background = element_rect(size = 2)) + theme_bw() + coord_flip() + theme(axis.title.y = element_text(colour="grey20",size= 12,face="bold"),
+        axis.text.x = element_text(colour="grey20",size= 12,face="bold"), axis.text.y = element_text(colour="grey20",size= 12,face="bold"), axis.title.x = element_text(colour="grey20",size=12,face="bold"))
+  p2 <- ggplot(events, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_predicted) + theme_bw() + coord_flip() + 
+        theme(axis.title.y = element_text(colour="grey20",size = 12,face="bold"),
+        axis.text.x = element_text(colour="grey20",size= 12,face="bold"), axis.text.y = element_text(colour="grey20",size= 12,face="bold"), axis.title.x = element_text(colour="grey20",size=12,face="bold"))
+  
+  gp1 <- ggplot_gtable(ggplot_build(p1))
+  gp2 <- ggplot_gtable(ggplot_build(p2))
+  
+  frame_grob <- grid.arrange(gp2, gp1, ncol = 1, nrow=2)
+  grob <- grid.grab()
 
-library(reshape2)
-
-dat$row <- seq_len(nrow(dat))
-dat2 <- melt(dat, id.vars = "row")
-print(dat2)
-
-library(ggplot2)
-
-ggplot(dat2, aes(x=variable, y=value, fill=row)) + 
-  geom_bar(stat="identity") +
-  xlab("\nType") +
-  ylab("Time\n") +
-  guides(fill=FALSE) +
-  theme_bw()
+  png(image_file, width = 600, height = 600)
+  grid.newpage()
+  grid.draw(grob)
+  dev.off()
 }
