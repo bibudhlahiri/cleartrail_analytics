@@ -65,20 +65,15 @@ get_majority_predicted_event <- function(dt)
   names(tt[which.max(tt)])
 }
 
-visualize_events <- function()
+fill_gaps <- function(input_data) 
 {
-  image_file <- "~/cleartrail_analytics/figures/timeline_view.png"
-  
-  #Process the predicted events and timeline data
-  
-  start_end_event <- temporal_aggregation()
   i <- 2
-  n_start_end_event <- nrow(start_end_event)
+  n_input_data <- nrow(input_data)
 
-  #Fill in the gaps in start_end_event  
+  #Fill in the gaps in input_data  
   while (TRUE)
   {
-    gap <- as.numeric(difftime(strptime(start_end_event[i, "StartTime"], "%H:%M:%S"), strptime(start_end_event[i-1, "EndTime"], "%H:%M:%S"), units = "secs"))
+    gap <- as.numeric(difftime(strptime(input_data[i, "StartTime"], "%H:%M:%S"), strptime(input_data[i-1, "EndTime"], "%H:%M:%S"), units = "secs"))
     if (is.na(gap)) 
     {
       break
@@ -86,34 +81,44 @@ visualize_events <- function()
     if (gap > 1)
     {
       #Add a junk row at end before we start pushing down.
-      start_end_event <- rbind(start_end_event, data.frame(Event = "", StartTime = "", EndTime = ""))
-      rownames(start_end_event) <- NULL #Adjust row numbers after addition
+      input_data <- rbind(input_data, data.frame(Event = "", StartTime = "", EndTime = ""))
+      rownames(input_data) <- NULL #Adjust row numbers after addition
          
-      #Push down everything from i-th row to end of start_end_event. Run the loop starting from end.
-      for (k in n_start_end_event:i)
+      #Push down everything from i-th row to end of input_data. Run the loop starting from end.
+      for (k in n_input_data:i)
       {
-           start_end_event[k + 1, "Event"] <- start_end_event[k, "Event"]
-           start_end_event[k + 1, "StartTime"] <- start_end_event[k, "StartTime"]
-           start_end_event[k + 1, "EndTime"] <- start_end_event[k, "EndTime"]
+           input_data[k + 1, "Event"] <- input_data[k, "Event"]
+           input_data[k + 1, "StartTime"] <- input_data[k, "StartTime"]
+           input_data[k + 1, "EndTime"] <- input_data[k, "EndTime"]
       }
-      start_end_event[i, "Event"] <- "Missing"
-      start_end_event[i, "StartTime"] <- strftime(strptime(as.character(start_end_event[i-1, "EndTime"]), "%H:%M:%S") + 1, "%H:%M:%S")
-      start_end_event[i, "EndTime"] <- strftime(strptime(as.character(start_end_event[i+1, "StartTime"]), "%H:%M:%S") - 1, "%H:%M:%S")
+      input_data[i, "Event"] <- "Missing"
+      input_data[i, "StartTime"] <- strftime(strptime(as.character(input_data[i-1, "EndTime"]), "%H:%M:%S") + 1, "%H:%M:%S")
+      input_data[i, "EndTime"] <- strftime(strptime(as.character(input_data[i+1, "StartTime"]), "%H:%M:%S") - 1, "%H:%M:%S")
       
-      n_start_end_event <- nrow(start_end_event) #Needs update for use in the inner for loop with k in the next iteration
+      n_input_data <- nrow(input_data) #Needs update for use in the inner for loop with k in the next iteration
       i <- i + 2 #Incrementing by 2, instead of 1, since a new row has been added
     }
     else
     {
-      i <- i + 1 #No gap was found, just climb down start_end_event
+      i <- i + 1 #No gap was found, just climb down input_data
     }
   }
+  input_data
+}
+
+visualize_events <- function()
+{
+  image_file <- "~/cleartrail_analytics/figures/timeline_view.png"
+  
+  #Process the predicted events and timeline data
+  start_end_event <- temporal_aggregation()
+  start_end_event <- fill_gaps(start_end_event)
+  
   start_end_event$duration <- as.numeric(difftime(strptime(start_end_event$EndTime, "%H:%M:%S"), strptime(start_end_event$StartTime, "%H:%M:%S"), units = "secs")) + 1
   start_end_event$source <- rep("Predicted", nrow(start_end_event))
-  
   time_start_predicted <- start_end_event[1, "StartTime"]
-  start_end_event <- start_end_event[, !(colnames(start_end_event) %in% c("StartTime", "EndTime"))]
   print(start_end_event)
+  start_end_event <- start_end_event[, !(colnames(start_end_event) %in% c("StartTime", "EndTime"))]
   
   #Process the actual events and timeline data
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
@@ -126,35 +131,24 @@ visualize_events <- function()
   events[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
   events[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
   events[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
+  
+  events <- as.data.frame(events)
+  events <- fill_gaps(events)
   events$duration <- as.numeric(difftime(strptime(events$EndTime, "%H:%M:%S"), strptime(events$StartTime, "%H:%M:%S"), units = "secs")) + 1
-  events[, source := rep("Actual", nrow(events))]
-  
-  
-  time_start_actual <- events[1, StartTime]
-  ylab_common <- paste("Time (in seconds since ", min(c(time_start_actual, time_start_predicted)), ")\n", sep = "")
-  events[ ,`:=`(StartTime = NULL, EndTime = NULL)]
-  
+  events$source <- rep("Actual", nrow(events))
   print(events)
   
+  time_start_actual <- events[1, "StartTime"]
+  ylab_common <- paste("Time (in seconds since ", min(c(time_start_actual, time_start_predicted)), ")\n", sep = "")
+  events <- events[, !(colnames(events) %in% c("StartTime", "EndTime"))]
   
-  #p1 at bottom, p2 at top
-  p1 <- ggplot(events, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_common) + 
-        scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) +  theme_bw() + coord_flip() 
-        #+ theme(plot.margin = unit(c(-1,0.5,0.5,0.5), "lines"))
-  p2 <- ggplot(start_end_event, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + labs(y = NULL) + 
-        scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) + theme_bw() + coord_flip() 
-        #+ theme(axis.text.x=element_blank(), axis.title.x=element_blank(), plot.title=element_blank(), axis.ticks.x=element_blank(), plot.margin = unit(c(0.5,0.5,-1,0.5), "lines"))
-  
-  
-  gp1 <- ggplot_gtable(ggplot_build(p1))
-  gp2 <- ggplot_gtable(ggplot_build(p2))
-  
-  frame_grob <- grid.arrange(gp2, gp1, ncol = 1, nrow=2)
-  grob <- grid.grab()
-
+  all_together <- rbind(events, start_end_event)
+  all_together$Event <- factor(all_together$Event)
   png(image_file, width = 600, height = 600)
-  grid.newpage()
-  grid.draw(grob)
-  dev.off()
+  
+  p <- ggplot(all_together, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_common) + 
+        scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) +  theme_bw() + coord_flip()
+  print(p)
+  aux <- dev.off()
   list(start_end_event = start_end_event, events = events)
 }
