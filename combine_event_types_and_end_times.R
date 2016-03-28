@@ -72,11 +72,43 @@ visualize_events <- function()
   #Process the predicted events and timeline data
   
   start_end_event <- temporal_aggregation()
-  start_end_event <- as.data.table(start_end_event)
+  n_start_end_event <- nrow(start_end_event)
+
+  #Fill in the gaps in start_end_event  
+  for (i in 2:n_start_end_event)
+  {
+    gap <- as.numeric(difftime(strptime(start_end_event[i, "StartTime"], "%H:%M:%S"), strptime(start_end_event[i-1, "EndTime"], "%H:%M:%S"), units = "secs"))
+    if (gap > 1)
+    {
+      cat(paste("gap found for row = ", i, "\n", sep = ""))
+      cat("start_end_event before pushdown\n")
+      print(start_end_event)
+      #Add a junk row at end before we start pushing down.
+      start_end_event <- rbind(start_end_event, data.frame(Event = "", StartTime = "", EndTime = ""))
+      rownames(start_end_event) <- NULL #Adjust row numbers after addition
+         
+      #Push down everything from i-th row to end of start_end_event. Run the loop starting from end.
+      for (k in n_start_end_event:i)
+      {
+           start_end_event[k + 1, "Event"] <- start_end_event[k, "Event"]
+           start_end_event[k + 1, "StartTime"] <- start_end_event[k, "StartTime"]
+           start_end_event[k + 1, "EndTime"] <- start_end_event[k, "EndTime"]
+      }
+      start_end_event[i, "Event"] <- "Missing"
+      start_end_event[i, "StartTime"] <- strftime(strptime(as.character(start_end_event[i-1, "EndTime"]), "%H:%M:%S") + 1, "%H:%M:%S")
+      start_end_event[i, "EndTime"] <- strftime(strptime(as.character(start_end_event[i+1, "StartTime"]), "%H:%M:%S") - 1, "%H:%M:%S")
+      
+      n_start_end_event <- nrow(start_end_event) #Needs update for the next iteration
+      cat("start_end_event after pushdown\n")
+      print(start_end_event)
+    }
+  }
   start_end_event$duration <- as.numeric(difftime(strptime(start_end_event$EndTime, "%H:%M:%S"), strptime(start_end_event$StartTime, "%H:%M:%S"), units = "secs")) + 1
-  start_end_event[, source := rep("Predicted", nrow(start_end_event))]
-  ylab_predicted <- paste("Time (in seconds since ", start_end_event[1, StartTime], ")\n", sep = "")
-  start_end_event[ ,`:=`(StartTime = NULL, EndTime = NULL)]
+  start_end_event$source <- rep("Predicted", nrow(start_end_event))
+  
+  time_start_predicted <- start_end_event[1, "StartTime"]
+  start_end_event <- start_end_event[, !(colnames(start_end_event) %in% c("StartTime", "EndTime"))]
+  print(start_end_event)
   
   #Process the actual events and timeline data
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
@@ -91,19 +123,23 @@ visualize_events <- function()
   events[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
   events$duration <- as.numeric(difftime(strptime(events$EndTime, "%H:%M:%S"), strptime(events$StartTime, "%H:%M:%S"), units = "secs")) + 1
   events[, source := rep("Actual", nrow(events))]
-  ylab_actual <- paste("Time (in seconds since ", events[1, StartTime], ")\n", sep = "")
+  
+  
+  time_start_actual <- events[1, StartTime]
+  ylab_common <- paste("Time (in seconds since ", min(c(time_start_actual, time_start_predicted)), ")\n", sep = "")
   events[ ,`:=`(StartTime = NULL, EndTime = NULL)]
   
   print(events)
-  print(start_end_event)
   
   
-  p1 <- ggplot(start_end_event, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_actual) + 
-        theme(panel.background = element_rect(size = 2)) + theme_bw() + coord_flip() + theme(axis.title.y = element_text(colour="grey20",size= 12,face="bold"),
-        axis.text.x = element_text(colour="grey20",size= 12,face="bold"), axis.text.y = element_text(colour="grey20",size= 12,face="bold"), axis.title.x = element_text(colour="grey20",size=12,face="bold"))
-  p2 <- ggplot(events, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_predicted) + theme_bw() + coord_flip() + 
-        theme(axis.title.y = element_text(colour="grey20",size = 12,face="bold"),
-        axis.text.x = element_text(colour="grey20",size= 12,face="bold"), axis.text.y = element_text(colour="grey20",size= 12,face="bold"), axis.title.x = element_text(colour="grey20",size=12,face="bold"))
+  #p1 at bottom, p2 at top
+  p1 <- ggplot(events, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_common) + 
+        scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) +  theme_bw() + coord_flip() 
+        #+ theme(plot.margin = unit(c(-1,0.5,0.5,0.5), "lines"))
+  p2 <- ggplot(start_end_event, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + labs(y = NULL) + 
+        scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) + theme_bw() + coord_flip() 
+        #+ theme(axis.text.x=element_blank(), axis.title.x=element_blank(), plot.title=element_blank(), axis.ticks.x=element_blank(), plot.margin = unit(c(0.5,0.5,-1,0.5), "lines"))
+  
   
   gp1 <- ggplot_gtable(ggplot_build(p1))
   gp2 <- ggplot_gtable(ggplot_build(p2))
@@ -115,4 +151,5 @@ visualize_events <- function()
   grid.newpage()
   grid.draw(grob)
   dev.off()
+  list(start_end_event = start_end_event, events = events)
 }
