@@ -72,17 +72,19 @@ visualize_events <- function()
   #Process the predicted events and timeline data
   
   start_end_event <- temporal_aggregation()
+  i <- 2
   n_start_end_event <- nrow(start_end_event)
 
   #Fill in the gaps in start_end_event  
-  for (i in 2:n_start_end_event)
+  while (TRUE)
   {
     gap <- as.numeric(difftime(strptime(start_end_event[i, "StartTime"], "%H:%M:%S"), strptime(start_end_event[i-1, "EndTime"], "%H:%M:%S"), units = "secs"))
+    if (is.na(gap)) 
+    {
+      break
+    }
     if (gap > 1)
     {
-      cat(paste("gap found for row = ", i, "\n", sep = ""))
-      cat("start_end_event before pushdown\n")
-      print(start_end_event)
       #Add a junk row at end before we start pushing down.
       start_end_event <- rbind(start_end_event, data.frame(Event = "", StartTime = "", EndTime = ""))
       rownames(start_end_event) <- NULL #Adjust row numbers after addition
@@ -98,9 +100,12 @@ visualize_events <- function()
       start_end_event[i, "StartTime"] <- strftime(strptime(as.character(start_end_event[i-1, "EndTime"]), "%H:%M:%S") + 1, "%H:%M:%S")
       start_end_event[i, "EndTime"] <- strftime(strptime(as.character(start_end_event[i+1, "StartTime"]), "%H:%M:%S") - 1, "%H:%M:%S")
       
-      n_start_end_event <- nrow(start_end_event) #Needs update for the next iteration
-      cat("start_end_event after pushdown\n")
-      print(start_end_event)
+      n_start_end_event <- nrow(start_end_event) #Needs update for use in the inner for loop with k in the next iteration
+      i <- i + 2 #Incrementing by 2, instead of 1, since a new row has been added
+    }
+    else
+    {
+      i <- i + 1 #No gap was found, just climb down start_end_event
     }
   }
   start_end_event$duration <- as.numeric(difftime(strptime(start_end_event$EndTime, "%H:%M:%S"), strptime(start_end_event$StartTime, "%H:%M:%S"), units = "secs")) + 1
