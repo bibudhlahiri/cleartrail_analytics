@@ -106,6 +106,20 @@ fill_gaps <- function(input_data)
   input_data
 }
 
+#How many of the actual events have a matching event of the same type and with an end time within 1 minute of the end time of the actual event?
+find_match_actual_predicted <- function(events, start_end_event)
+{
+  events$has_match <- apply(events, 1, function(row) find_match(as.character(row["EndTime"]), as.character(row["Event"]), start_end_event))
+  events
+}
+
+find_match <- function(input_endtime, input_event, events)
+{
+  matching <- subset(events, ((events$Event == input_event) & 
+                  (abs(as.numeric(difftime(strptime(events$EndTime, "%H:%M:%S"), strptime(input_endtime, "%H:%M:%S"), units = "secs"))) <= 60))) 
+  (nrow(matching) > 0)
+}
+
 visualize_events <- function()
 {
   image_file <- "~/cleartrail_analytics/figures/timeline_view.png"
@@ -117,8 +131,7 @@ visualize_events <- function()
   start_end_event$duration <- as.numeric(difftime(strptime(start_end_event$EndTime, "%H:%M:%S"), strptime(start_end_event$StartTime, "%H:%M:%S"), units = "secs")) + 1
   start_end_event$source <- rep("Predicted", nrow(start_end_event))
   time_start_predicted <- start_end_event[1, "StartTime"]
-  print(start_end_event)
-  start_end_event <- start_end_event[, !(colnames(start_end_event) %in% c("StartTime", "EndTime"))]
+  #start_end_event <- start_end_event[, !(colnames(start_end_event) %in% c("StartTime", "EndTime"))]
   
   #Process the actual events and timeline data
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
@@ -136,18 +149,32 @@ visualize_events <- function()
   events <- fill_gaps(events)
   events$duration <- as.numeric(difftime(strptime(events$EndTime, "%H:%M:%S"), strptime(events$StartTime, "%H:%M:%S"), units = "secs")) + 1
   events$source <- rep("Actual", nrow(events))
-  print(events)
   
   time_start_actual <- events[1, "StartTime"]
   ylab_common <- paste("Time (in seconds since ", min(c(time_start_actual, time_start_predicted)), ")\n", sep = "")
-  events <- events[, !(colnames(events) %in% c("StartTime", "EndTime"))]
+  #events <- events[, !(colnames(events) %in% c("StartTime", "EndTime"))]
   
   all_together <- rbind(events, start_end_event)
   all_together$Event <- factor(all_together$Event)
-  png(image_file, width = 600, height = 600)
   
-  p <- ggplot(all_together, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.1) + xlab("\nEvent Type") + ylab(ylab_common) + 
-        scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) +  theme_bw() + coord_flip()
+  events <- find_match_actual_predicted(events, start_end_event)
+  has_matching <- subset(events, (events$has_match == TRUE))
+  cat(paste("Fraction of actual events that have a matching event of the same type and with an end time within 1 minute of the end time of the actual event is ",
+            nrow(has_matching)/nrow(events), "\n", sep = ""))
+  
+  png(image_file, width = 1200, height = 400)
+  
+  positions <- c("Predicted", "Actual")
+  p <- ggplot(all_together, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.4) + 
+       scale_colour_manual(values = c("Missing" = "black", "Other" = "black", "Tweet_Text_Only" = "black", "Tweet+Image" = "black")) + 
+       scale_x_discrete(limits = positions) + labs(title = "Timeline view of actual vs predicted events") + 
+       xlab("\nEvent Type") + ylab(ylab_common) + 
+        scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) +  theme_bw() + 
+        theme(axis.text.x = element_text(colour = "grey20", size=12, face = "bold"),
+              axis.text.y = element_text(colour = "grey20", size=12, face = "bold"),  
+              axis.title.x = element_text(colour="grey20", size=12, face = "bold"),
+              axis.title.y = element_text(colour="grey20", size=12, face = "bold"),
+              plot.title = element_text(size = rel(2), colour = "blue")) + coord_flip()
   print(p)
   aux <- dev.off()
   list(start_end_event = start_end_event, events = events)
