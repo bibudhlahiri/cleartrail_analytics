@@ -2,14 +2,12 @@ library(data.table)
 
 create_session_data <- function()
 {
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/PacketData_DevQA_TestCase1.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/PacketData_ProducionTestCase2.csv"
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Packets_DataSet_TC1.csv"
   
   this_set <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character"),
                     data.table = TRUE)
-  this_set[, LocalTime := strftime(strptime(this_set$LocalTime, "%d/%b/%Y %H:%M:%S"), "%H:%M:%S")]     
+  this_set[, LocalTime := strftime(strptime(this_set$LocalTime, "%d/%b/%Y %H:%M:%S"), "%H:%M:%S")] 
               
   #Get the sessions (unique combinations of server IP, server port, client IP, client port) first. Get the earliest and last timestamps for each, and get the number of packets exchanged also.
   #Identify the server and client IP for each packet. Both can be senders and receivers.
@@ -18,8 +16,6 @@ create_session_data <- function()
   this_set[, ServerPort := apply(this_set, 1, function(row) get_server_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
   this_set[, ClientPort := apply(this_set, 1, function(row) get_client_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
   this_set[, Direction := apply(this_set, 1, function(row) get_direction(as.numeric(row["DestPort"])))]
-    
-  #Distribution of domain: *.twimg.com is 11010/17399 (63.2%), upload.twitter.com is 4506/17399 (25.89%), twitter.com is 1641/17399 (9.43%), pbs.twimg.com is 154/17399 (0.88%).	
   
   setkey(this_set, ServerIP, ServerPort, ClientIP, ClientPort)
   sessions <- this_set[, list(start_time = min(LocalTime), end_time = max(LocalTime), n_packets = length(LocalTime)), by = list(ServerIP, ServerPort, ClientIP, ClientPort)] 
@@ -27,29 +23,11 @@ create_session_data <- function()
   sessions[, session_id := 1:nrow(sessions)]
   revised_packet_data <- create_flow_data(this_set, sessions)
   
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/SessionData_DevQA_TestCase1.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/SessionData_ProducionTestCase2.csv"
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/SessionData_23_Feb_2016_TC1.csv"
   write.table(sessions, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
   
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
   write.table(revised_packet_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
-}
- 
-analyze_session_data <- function()
-{
-  sessions <- create_session_data()
-  print(fivenum(sessions$duration)) #0.0, 1.0, 5.0, 232.5, 1719.0
-  
-  filename <- "./figures/session_duration_distn.png" 
-  png(filename, width = 600, height = 480, units = "px")
-  p <- ggplot(sessions, aes(duration)) + geom_histogram(aes(y = ..density..)) + geom_density() +  
-              labs(x = "Session duration in seconds") + ylab("Density")
-  print(p)
-  aux <- dev.off()
-  print(cor(sessions$n_packets, sessions$duration)) #0.3383304
 }
 
 create_flow_data <- function(packets, sessions)
