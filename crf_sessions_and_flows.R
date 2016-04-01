@@ -4,9 +4,6 @@ library(e1071)
 
 label_packets <- function()
 {
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/RevisedPacketData_DevQA_TestCase1.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/RevisedPacketData_ProducionTestCase2.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv"
   revised_packets <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
@@ -14,9 +11,6 @@ label_packets <- function()
                     data.table = TRUE)
                     
   #Get the event corresponding to each transaction
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/Twittertestcase_10_Feb.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
@@ -30,8 +24,7 @@ label_packets <- function()
   setkey(revised_packets, LocalTime)
   revised_packets <- revised_packets[((LocalTime >= as.character(user_starts_at)) & (LocalTime <= as.character(user_ends_at))),]
   
-  #Model it like HMM and solve it with CRF where the activity at a point in time is the hidden state, and the session and flow-related features at the same point in time
-  #create the visible states. The session and flow-related features come by aggregating session and flow-related data at each instant.
+  #The session and flow-related features come by aggregating session and flow-related data at each instant.
   
   revised_packets <- revised_packets[order(LocalTime),]
   hidden_and_vis_states <- revised_packets[, list(n_packets = length(Rx), n_sessions = uniqueN(session_id), n_flows = uniqueN(flow_id), 
@@ -64,9 +57,6 @@ label_packets <- function()
   hidden_and_vis_states[, avg_upstream_bytes_per_packet := upstream_bytes/n_packets]
   hidden_and_vis_states[, avg_downstream_bytes_per_packet := downstream_bytes/n_packets]
   
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/hidden_and_vis_states_DevQA_TestCase1.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET2/Production_DataSet_2/hidden_and_vis_states_ProducionTestCase2.csv"
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv"
   filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv"
   
   #Re-order by time before writing to CSV
@@ -136,7 +126,7 @@ prepare_data_for_detecting_endtimes <- function(hidden_and_vis_states_file, even
   hidden_and_vis_states
 }
 
-#Decision tree.
+#Decision tree. Check this: https://zyxo.wordpress.com/2011/07/04/how-to-use-the-settings-to-control-the-size-of-decision-trees/
 
 detect_endtimes_rpart <- function(training_data, test_data, hidden_and_vis_states_with_eoe_file)
 {
@@ -257,32 +247,45 @@ get_matching_timestamp <- function(end_time, hidden_and_vis_states)
   hidden_and_vis_states[1, LocalTime]
 }
  
+#Sample balancing for arbitrary number of classes
 create_bs_by_over_and_undersampling <- function(df)
 {
-  set.seed(1)
   n_df <- nrow(df)
-  size_each_part <- n_df/2
-
-  majority_set <- df[(end_of_event == FALSE),]
-  n_majority <- nrow(majority_set)
-  cat(paste("n_majority = ", n_majority, ", n_df = ", n_df, ", size_each_part = ", size_each_part, "\n", sep = ""))
-  sample_majority_ind <- sample(1:n_majority, size_each_part, replace = FALSE)
-  sample_majority <- majority_set[sample_majority_ind, ]
-    
-  minority_set <- df[(end_of_event == TRUE),]
-  n_minority <- nrow(minority_set)
-  rep_times <- size_each_part%/%nrow(minority_set)
-  oversampled_minority_set <- minority_set
-  for (i in 1:(rep_times - 1))
+  classes <- unique(df$Event)
+  n_classes <- length(classes)
+  size_each_part <- round(n_df/n_classes)
+  bal_df <- data.table()
+  setkey(df, Event)
+  
+  for (i in 1:n_classes)
   {
-    oversampled_minority_set <- rbindlist(list(oversampled_minority_set, minority_set))
+     this_set <- df[(Event == classes[i]),]
+     n_this_set <- nrow(this_set)
+     if (n_this_set >= size_each_part)
+     {
+       #undersample
+       sample_ind <- sample(1:n_this_set, size_each_part, replace = FALSE)
+       sample_from_this_set <- this_set[sample_ind, ]
+       bal_df <- rbindlist(list(bal_df, sample_from_this_set))
+     }
+     else
+     {
+       rep_times <- size_each_part%/%n_this_set
+       oversampled_set <- this_set
+       if (rep_times >= 2)
+       {
+         for (i in 1:(rep_times - 1))
+         {
+           oversampled_set <- rbindlist(list(oversampled_set, this_set))
+         }
+       }
+       rem_sample_id <- sample(1:n_this_set, size_each_part%%n_this_set, replace = FALSE)
+       rem_sample <- this_set[rem_sample_id, ]
+       oversampled_set <- rbindlist(list(oversampled_set, rem_sample))
+       bal_df <- rbindlist(list(bal_df, oversampled_set))
+     }
   }
-  rem_sample_id <- sample(1:n_minority, size_each_part%%nrow(minority_set), replace = FALSE)
-  rem_sample <- minority_set[rem_sample_id, ]
-  oversampled_minority_set <- rbindlist(list(oversampled_minority_set, rem_sample))
-
-  bal_df <- rbindlist(list(sample_majority, oversampled_minority_set))
-  return(bal_df)
+  bal_df
 }
 
 prepare_packet_data_for_CRF <- function(revised_pkt_data_file, events_file, hidden_and_vis_states_file)
@@ -328,10 +331,20 @@ prepare_packet_data_for_CRF <- function(revised_pkt_data_file, events_file, hidd
   #Change the key back to session_id and LocalTime so that all packets for a session are printed together
   setkey(revised_packets, session_id, LocalTime)
   
+  #Keep only one between Tx and Rx as one of them is always 0
+  revised_packets[, pkt_bytes := ifelse(Tx > 0, Tx, Rx)]
+  
   #Drop columns that are not needed for modeling. We need to retain the timestamp in the test data so that we can group by it later to get the majority vote among labeled events for a timestamp.
    
-  revised_packets[ ,`:=`(Timestamp = NULL, SourcePort = NULL, DestPort = NULL, SourceIP = NULL, DestIP = NULL, ServerIP = NULL, ClientIP = NULL, ServerPort = NULL, ClientPort = NULL, flow_id = NULL)]
+  revised_packets[ ,`:=`(Timestamp = NULL, SourcePort = NULL, DestPort = NULL, SourceIP = NULL, DestIP = NULL, ServerIP = NULL, ClientIP = NULL, 
+                        ServerPort = NULL, ClientPort = NULL, flow_id = NULL, Tx = NULL, Rx = NULL)]
   revised_packets[, Event := apply(revised_packets, 1, function(row) gsub(" ", "_", as.character(row["Event"])))]
+  
+  revised_packets$DomainName <- as.factor(revised_packets$DomainName)
+  revised_packets$Direction <- as.factor(revised_packets$Direction)
+  revised_packets$Event <- as.factor(revised_packets$Event)
+  revised_packets$majority_domain <- as.factor(revised_packets$majority_domain)
+  
   revised_packets
 }
 
@@ -373,14 +386,22 @@ prepare_packet_data_for_CRF_from_separate_files <- function()
   training_data <- prepare_packet_data_for_CRF("/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv", 
                                                  "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv",
                                                  "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv")
+                                                 
+  #Merge the minor categories of events in training data into one
+  #setkey(training_data, Event)
+  #training_data[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down")), Event := "Other"]
+  #training_data$Event <- droplevels(training_data$Event)
+  
+  #Sample balancing should NOT be done in a CRF since it will geopardize the sequential nature of the training data.
+  
   test_data <- prepare_packet_data_for_CRF("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
                                                  "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
                                                  "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv")
   
   cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
   
-  print(table(training_data$Event)) #Reply_Tweet_Text_and_Image:3550, Reply_Tweet_Text_Only:344, ReTweet:579, Tweet_Only:595, Tweet+Image:2939, Uploading_Image:2525, User_Login:272, User_mouse_wheel_down:116
-  print(table(test_data$Event)) #Reply_Tweet_Text_and_Image:5900, Reply_Tweet_Text_Only:269, ReTweet:816, Tweet_Only:673, Tweet+Image:3326, User_Login:1852, User_mouse_wheel_down:3272
+  print(table(training_data$Event)) 
+  print(table(test_data$Event)) 
   
   print_crf_format(training_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1and2/train_ct_CRF.data")
   print_crf_format(test_data, "/Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1and2/test_ct_CRF.data")
@@ -398,7 +419,7 @@ print_crf_format <- function(input_data, filename)
       cat(paste(paste(rep(".", length(names(input_data)) - 1), collapse = " "), " end_of_session\n\n", sep = ""))
       curr_session_id <- input_data[i, session_id]
     }
-    cat(paste(input_data[i, LocalTime], input_data[i, session_id], input_data[i, Tx], input_data[i, Rx], input_data[i, DomainName], input_data[i, Direction], 
+    cat(paste(input_data[i, LocalTime], input_data[i, session_id], input_data[i, pkt_bytes], input_data[i, DomainName], input_data[i, Direction], 
               input_data[i, n_packets], input_data[i, n_sessions], input_data[i, n_flows], input_data[i, n_downstream_packets], input_data[i, n_upstream_packets], input_data[i, majority_domain], 
               input_data[i, upstream_bytes], input_data[i, downstream_bytes], input_data[i, frac_upstream_packets], input_data[i, frac_downstream_packets], input_data[i, avg_packets_per_session],
               input_data[i, avg_packets_per_flow], 
@@ -416,22 +437,18 @@ print_crf_format <- function(input_data, filename)
 measure_precision_recall <- function()
 {
   #Remove the blank lines after end of each session so that fread() does not halt
-  #system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data")
-  #system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data")
   system("sed -i '.bak' '/^[[:space:]]*$/d' /Users/blahiri/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data")
   
-  #filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
-  #filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
   filename <- "~/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
-                       colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
+                       colClasses = c("Date", "numeric", "numeric", "character", 
                                       "character", "numeric", "numeric", "numeric", "numeric", 
                                       "numeric", "character", "numeric", "numeric", "numeric", 
                                       "numeric", "numeric", "numeric", "numeric", "numeric", 
                                       "numeric", "numeric", "numeric", "numeric", "character", 
                                       "character"),
                        data.table = TRUE)
-  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "Tx", "Rx", "DomainName", 
+  setnames(crf_outcome, names(crf_outcome), c("LocalTime", "session_id", "pkt_bytes", "DomainName", 
                                               "Direction", "n_packets", "n_sessions", "n_flows", "n_downstream_packets", 
                                               "n_upstream_packets", "majority_domain", "upstream_bytes", "downstream_bytes", "frac_upstream_packets", 
                                               "frac_downstream_packets", "avg_packets_per_session", "avg_packets_per_flow", "total_bytes", "frac_upstream_bytes", 
@@ -477,8 +494,6 @@ measure_precision_recall <- function()
 #Using data.frame
 temporal_aggregation <- function()
 {
-  #filename <- "~/cleartrail_osn/for_CRF/SET2/predicted_labels_ct.data"
-  #filename <- "~/cleartrail_osn/for_CRF/SET3/TC1/predicted_labels_ct.data"
   filename <- "~/cleartrail_osn/for_CRF/SET3/TC1and2/predicted_labels_ct.data"
   crf_outcome <- fread(filename, header = FALSE, sep = "\t", stringsAsFactors = FALSE, showProgress = TRUE, 
                        colClasses = c("Date", "numeric", "numeric", "numeric", "character", 
