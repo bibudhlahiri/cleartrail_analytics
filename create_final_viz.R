@@ -20,7 +20,7 @@ temporal_aggregation <- function(predicted_event_types_file, start_end_event_fil
   #The actual event will be only one, hence unique() works; but predicted events may have multiple distinct values, so take the majority.
   temporal_aggregate <- predicted_event_types[, list(actual_event = unique(Event), majority_predicted_event = get_majority_predicted_event(.SD)), by = LocalTime,
                                               .SDcols=c("Event", "predicted_event")]
-  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) 
+  cat(paste("\nAccuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) 
   
   #Aggregate start and end times based on temporal_aggregate
    
@@ -120,24 +120,20 @@ find_match <- function(input_endtime, input_event, events)
   (nrow(matching) > 0)
 }
 
-visualize_events <- function()
-{
-  #image_file <- "~/cleartrail_analytics/figures/timeline_view_SET3_TC2.png"
-  image_file <- "~/cleartrail_analytics/figures/timeline_view_SET2_DevQA_DataSet1.png"
-  
+visualize_events <- function(image_file, start_end_event_file, events_test)
+{  
+  start_end_event <- as.data.frame(fread(start_end_event_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                       colClasses = c("character", "character", "character"),
+                       data.table = TRUE))
   #Process the predicted events and timeline data
-  start_end_event <- temporal_aggregation()
   start_end_event <- fill_gaps(start_end_event)
   
   start_end_event$duration <- as.numeric(difftime(strptime(start_end_event$EndTime, "%H:%M:%S"), strptime(start_end_event$StartTime, "%H:%M:%S"), units = "secs")) + 1
   start_end_event$source <- rep("Predicted", nrow(start_end_event))
   time_start_predicted <- start_end_event[1, "StartTime"]
-  #start_end_event <- start_end_event[, !(colnames(start_end_event) %in% c("StartTime", "EndTime"))]
   
   #Process the actual events and timeline data
-  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
-  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
-  events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  events <- fread(events_test, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
   events[, StartTime := strftime(strptime(events$StartTime, "%H:%M:%S"), "%H:%M:%S")]
@@ -154,7 +150,26 @@ visualize_events <- function()
   
   time_start_actual <- events[1, "StartTime"]
   ylab_common <- paste("Time (in seconds since ", min(c(time_start_actual, time_start_predicted)), ")\n", sep = "")
-  #events <- events[, !(colnames(events) %in% c("StartTime", "EndTime"))]
+  
+  #Check which one between start_end_event and events starts earlier. Fill the other one with a row of Missing.
+  if (time_start_predicted > time_start_actual)
+  {
+    end_time <- strftime(strptime(time_start_predicted, "%H:%M:%S") - 1, "%H:%M:%S")
+    filler_duration <- as.numeric(difftime(strptime(end_time, "%H:%M:%S"), strptime(time_start_actual, "%H:%M:%S"), units = "secs")) + 1
+    filler <- data.frame(Event = "Missing", StartTime = time_start_actual, 
+                         EndTime = end_time, duration = filler_duration,
+                         source = "Predicted")
+    start_end_event <- rbind(filler, start_end_event)
+  }
+  else
+  {
+    end_time <- strftime(strptime(time_start_actual, "%H:%M:%S") - 1, "%H:%M:%S")
+    filler_duration <- as.numeric(difftime(strptime(end_time, "%H:%M:%S"), strptime(time_start_predicted, "%H:%M:%S"), units = "secs")) + 1
+    filler <- data.frame(Event = "Missing", StartTime = time_start_predicted, 
+                         EndTime = end_time, duration = filler_duration,
+                         source = "Actual")
+    events <- rbind(filler, events)
+  }
   
   all_together <- rbind(events, start_end_event)
   all_together$Event <- factor(all_together$Event)
@@ -168,7 +183,6 @@ visualize_events <- function()
   
   positions <- c("Predicted", "Actual")
   p <- ggplot(all_together, aes(x = source, y = duration, fill = Event)) + geom_bar(stat = "identity", width = 0.4) + 
-       scale_colour_manual(values = c("Missing" = "black", "Other" = "black", "Tweet_Text_Only" = "black", "Tweet+Image" = "black")) + 
        scale_x_discrete(limits = positions) + labs(title = "Timeline view of actual vs predicted events") + 
        xlab("\nEvent Type") + ylab(ylab_common) + 
         scale_y_continuous(breaks = seq(0, 1500, 300), limits = c(0, 1500)) +  theme_bw() + 

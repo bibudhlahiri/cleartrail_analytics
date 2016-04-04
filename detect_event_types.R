@@ -134,7 +134,7 @@ prepare_test_data <- function(revised_pkts_test, events_test, hidden_and_vis_sta
   cat("\nDistribution of test data after merging Reply_Tweet_Text_Only, ReTweet and Tweet_Only\n")
   print(table(test_data$Event))
   
-  cat(paste("Size of test data = ", nrow(test_data), "\n", sep = ""))
+  cat(paste("\nSize of test data = ", nrow(test_data), "\n", sep = ""))
   
   test_data
 }

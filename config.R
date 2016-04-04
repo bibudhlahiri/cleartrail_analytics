@@ -5,7 +5,7 @@
 revised_pkts_trg <- "~/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
 
 #File where the human user saves the event names, start and end times. Please make sure the times are entered in a consistent manner (HH24:MM:SS),
-#the first row has the following column names: Event, StartTime and EndTime, and the events are of the following types: User Login, Tweet+Image,
+#the first row has the following column names: Event, StartTime and EndTime, and the events are only of the following types: User Login, Tweet+Image,
 #Tweet Only, ReTweet, Reply Tweet Text Only, Reply Tweet Text and Image, Like, User mouse drag end, User mouse wheel down.
 
 events_trg <- "~/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv"
@@ -27,3 +27,6 @@ saved_model <- "~/cleartrail_analytics/nb_model.rds"
 
 #The final output file with event types and start and end times
 start_end_event_file <- "~/cleartrail_osn/SET3/TC2/start_end_event.csv"
+
+#File shows the actual vs the predicted events in a horizontal scale
+image_file <- "~/cleartrail_analytics/figures/timeline_view_SET3_TC2.png"
