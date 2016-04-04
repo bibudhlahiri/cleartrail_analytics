@@ -73,11 +73,9 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
 }
 
 
-prepare_training_and_test_data <- function()
+prepare_training_data <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
 {
-  training_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv", 
-                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Set_I.csv",
-                                                          "/Users/blahiri/cleartrail_osn/SET3/TC1/hidden_and_vis_states_23_Feb_2016_Set_I.csv")
+  training_data <- prepare_data_for_detecting_event_types(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
   cat("Original distribution of training data\n")
   print(table(training_data$Event))  
                                                          
@@ -98,18 +96,22 @@ prepare_training_and_test_data <- function()
   
   training_data <- training_data[!(Event == "Uploading_Image"),] 
   
-  training_data[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
+  training_data[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only", "Tweet", "Reply_Tweet")), Event := "Tweet_Text_Only"]
   training_data$Event <- droplevels(training_data$Event)
   
-  cat("\nDistribution of training data after deleting Uploading_Image, and merging Reply_Tweet_Text_Only, ReTweet and Tweet_Only...writing to the file\n")
+  cat("\nDistribution of training data after deleting Uploading_Image, and merging Reply_Tweet_Text_Only, ReTweet and Tweet_Only\n")
   print(table(training_data$Event))
   
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
-  write.table(training_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  training_data <- remove_noise_ae(training_data)
+  training_data[, reconstruction_error := NULL]
+  cat(paste("\n", "Size of training data after noise removal = ", nrow(training_data), "\n", sep = ""))
   
-  test_data <- prepare_data_for_detecting_event_types("/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv", 
-                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv",
-                                                      "/Users/blahiri/cleartrail_osn/SET3/TC2/hidden_and_vis_states_23_Feb_2016_Set_II.csv")
+  training_data
+}
+
+prepare_test_data <- function(revised_pkts_test, events_test, hidden_and_vis_states_test)
+{
+  test_data <- prepare_data_for_detecting_event_types(revised_pkts_test, events_test, hidden_and_vis_states_test)
   
   cat("Original distribution of test data\n")
   print(table(test_data$Event)) 
@@ -126,65 +128,24 @@ prepare_training_and_test_data <- function()
   cat("\nDistribution of test data after merging Reply_Tweet_Text_and_Image and Tweet+Image\n")
   print(table(test_data$Event))  
   
-  test_data[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
+  test_data[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only", "Tweet", "Reply_Tweet")), Event := "Tweet_Text_Only"]
   test_data$Event <- droplevels(test_data$Event)
   
   cat("\nDistribution of test data after merging Reply_Tweet_Text_Only, ReTweet and Tweet_Only\n")
   print(table(test_data$Event))
   
-  #levels(training_data$DomainName) <- levels(test_data$DomainName)
-  levels(test_data$Direction) <- levels(training_data$Direction)
-  #levels(training_data$majority_domain) <- levels(test_data$majority_domain)
+  cat(paste("Size of test data = ", nrow(test_data), "\n", sep = ""))
   
-  cat(paste("Size of training data = ", nrow(training_data), ", size of test data = ", nrow(test_data), "\n", sep = ""))
-  
-  cat(paste("\n", "nrow(training_data) before noise removal = ", nrow(training_data), "\n", sep = ""))
-  training_data <- remove_noise_ae(training_data)
-  training_data[, reconstruction_error := NULL]
-  cat(paste("\n", "nrow(training_data) after noise removal = ", nrow(training_data), "\n", sep = ""))
-  
-  list(training_data = training_data, test_data = test_data)
+  test_data
 }
 
 
-classify_packets_random_forest <- function()
+classify_packets_naive_bayes <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg, 
+                                         revised_pkts_test, events_test, hidden_and_vis_states_test, 
+                                         predicted_event_types, saved_model)
 {
-  ret_obj <- prepare_training_and_test_data()
-  training_data <- ret_obj[["training_data"]]
-  test_data <- ret_obj[["test_data"]]
-  
-  #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
-  #frac_upstream_packets.
-  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")
-  
-  bestmod <- randomForest(Event ~ ., data = training_data[, .SD, .SDcols = -cols])
-  
-  impRF <- bestmod$importance
-  impRF <- impRF[, "MeanDecreaseGini"]
-  imp <- impRF/sum(impRF)
-  print(sort(imp, decreasing = TRUE))
-   
-  test_data[, predicted_event := as.character(predict(bestmod, newdata = test_data, type = "class"))]
-  
-  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
-  print(prec_recall)
-  
-  #Measure overall accuracy
-  setkey(test_data, Event, predicted_event)
-  accuracy <- nrow(test_data[(Event == predicted_event),])/nrow(test_data)
-  cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = "")) #0.583388: seems like we need better features: 
-  #currently none of the features look very strong as the maximum (normalized) variable importance is 11.2%
-  measure_precision_recall(prec_recall)
-  
-  bestmod
-}
-
-#http://stats.stackexchange.com/questions/61034/naive-bayes-on-continuous-variables
-classify_packets_naive_bayes <- function()
-{
-  ret_obj <- prepare_training_and_test_data()
-  training_data <- ret_obj[["training_data"]]
-  test_data <- ret_obj[["test_data"]]
+  training_data <- prepare_training_data(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
+  test_data <- prepare_test_data(revised_pkts_test, events_test, hidden_and_vis_states_test)
   
   #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
   #frac_upstream_packets.
@@ -202,55 +163,38 @@ classify_packets_naive_bayes <- function()
   cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = "")) 
   measure_precision_recall(prec_recall)
   
-  bestmod
+  write.table(test_data, predicted_event_types, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  saveRDS(bestmod, saved_model)
 }
 
-
-classify_packets_deep_learning <- function(k = 5, n_units_hidden_layer_ae = 10)
+retrain_only <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg, saved_model)
 {
-  library(h2o)
-  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, Xmx = '2g')
-                    
-  ret_obj <- prepare_training_and_test_data()
-  training_data <- ret_obj[["training_data"]]
-  test_data <- ret_obj[["test_data"]]
+  training_data <- prepare_training_data(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
   
-  cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes")
-  features <- names(training_data) 
-  features <- features[!(features %in% cols)]
+  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")  
+  bestmod <- NaiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols], usekernel = TRUE, fL = 1)
   
-  training_data_h2o <- as.h2o(training_data, destination_frame = 'training_data')
-  model <- h2o.deeplearning(x = features, 
-                            y = "Event", 
-                            training_frame = training_data_h2o, 
-                            activation = "TanhWithDropout", 
-                            input_dropout_ratio = 0.2, 
-                            hidden_dropout_ratios = c(0.5,0.5,0.5), 
-                            balance_classes = TRUE, 
-                            hidden = c(50,50,50), # three layers of 50 nodes
-                            epochs = 100) # max. no. of epochs
+  saveRDS(bestmod, saved_model)
+}
 
-  test_data_h2o <- as.h2o(test_data, destination_frame = 'test_data')                       
-  h2o_yhat_test <- h2o.predict(model, test_data_h2o, type = "class")
-  df_yhat_test <- as.data.frame(h2o_yhat_test)
-  #h2o.shutdown()
+generate_labels_only <- function(revised_pkts_test, events_test, hidden_and_vis_states_test, 
+                                 predicted_event_types, saved_model)
+{
+  bestmod <- readRDS(saved_model)
+  test_data <- prepare_test_data(revised_pkts_test, events_test, hidden_and_vis_states_test)
   
-  test_data[, predicted_event := as.character(df_yhat_test$predict)]
+  #Note that we are not going to measure precision/recall as we do not know the actual labels for the test data
   
-  prec_recall <- table(test_data[, Event], test_data[, predicted_event], dnn = list('actual', 'predicted'))
-  print(prec_recall)
-  
-  #Measure overall accuracy
-  setkey(test_data, Event, predicted_event)
-  accuracy <- nrow(test_data[(Event == predicted_event),])/nrow(test_data)
-  cat(paste("Overall accuracy = ", accuracy, "\n\n", sep = ""))
-  measure_precision_recall(prec_recall)
-  model
+  test_data[, predicted_event := as.character((predict(bestmod, newdata = test_data))$class)]
+  write.table(test_data, predicted_event_types, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
 }
 
 
 remove_noise_ae <- function(training_data, k = 5, n_units_hidden_layer = 10)
 {
+  library(h2o)
+  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE, max_mem_size = '2g')
+  
   cols <- c("LocalTime", "session_id", "Event", "frac_downstream_packets", "frac_downstream_bytes"
             , "DomainName", "Direction", "majority_domain")
   features <- names(training_data) 
@@ -270,55 +214,12 @@ remove_noise_ae <- function(training_data, k = 5, n_units_hidden_layer = 10)
   
   #Take off the training data points whose reconstruction error are in the highest k-th percentile
   recon_error <- as.data.frame(recon_error)
-  print(fivenum(recon_error$Reconstruction.MSE))
   cutoff <- quantile(recon_error$Reconstruction.MSE, c(1 - k/100))
-  cat(paste("cutoff = ", cutoff, "\n", sep = ""))
   
   #We are not taking the reconstructed values of X. We are only removing those rows from X for which the reconstruction error are in the highest k-th percentile.
   training_data[, reconstruction_error := recon_error$Reconstruction.MSE]
   setkey(training_data, reconstruction_error)
   training_data[(reconstruction_error <= cutoff),]
-}
-
-principal_component <- function()
-{
-  library(ggplot2)
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/training_data.csv"
-  training_data <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("Date", "character", "character", "numeric", "character", 
-                                   "numeric", "numeric", "numeric", "numeric",  "numeric", "numeric", "character",
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", 
-                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
-                    data.table = TRUE)
-
-  Event <- training_data$Event
-  cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes", "majority_domain", "DomainName", "Direction", "Event")
-  training_data <- training_data[, .SD, .SDcols = -cols]
-  
-  training_data <- as.data.frame(training_data)
-  
-  #Drop columns with variance 0 as that presents a problem in scaling
-  training_data <- training_data[, apply(training_data, 2, var, na.rm=TRUE) != 0]
-  
-  pc <- prcomp(training_data, scale = TRUE)
-  
-  #The first 4 PCs explain 92.4% of variance in total. Reply_Tweet_Text_and_Image + Tweet+Image are sort of on the left of the figure, and 
-  #Uploading_Image is mostly on the right and center. However, at the center, Uploading_Image is pretty mixed up with ReTweet, Tweet_Only and Reply_Tweet_Text_Only, 
-  #perhaps that is why these classes get falsely labeled as Uploading_Image so often.
-  
-  projected <- as.data.frame(pc$x[, c("PC1", "PC2")])
-  projected$Event <- as.factor(Event)
-
-  #Anomalous on the right, benign on the left
-  png("./figures/events_first_two_pc.png",  width = 600, height = 480, units = "px")
-  projected <- data.frame(projected)
-  p <- ggplot(projected, aes(x = PC1, y = PC2)) + geom_point(aes(colour = Event), size = 2) + 
-         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
-         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold')) + 
-         ggtitle("Projections along first two PCs for events")
-  print(p)
-  dev.off()
-  pc
 }
 
 measure_precision_recall <- function(prec_recall)

@@ -6,10 +6,9 @@ library(grid)
 library(gridExtra)
 
 #Using data.frame
-temporal_aggregation <- function()
+temporal_aggregation <- function(predicted_event_types_file, start_end_event_file)
 {
-  filename <- "~/cleartrail_osn/SET3/TC2/predicted_event_types.csv"
-  predicted_event_types <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  predicted_event_types <- fread(predicted_event_types_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                        colClasses = c("Date", "character", "character", "numeric", "character", 
                                       "numeric", "numeric", "numeric", "numeric", "numeric", 
                                       "numeric", "character", "numeric", "numeric", "numeric", 
@@ -21,7 +20,7 @@ temporal_aggregation <- function()
   #The actual event will be only one, hence unique() works; but predicted events may have multiple distinct values, so take the majority.
   temporal_aggregate <- predicted_event_types[, list(actual_event = unique(Event), majority_predicted_event = get_majority_predicted_event(.SD)), by = LocalTime,
                                               .SDcols=c("Event", "predicted_event")]
-  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) # 0.819230769230769
+  cat(paste("Accuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) 
   
   #Aggregate start and end times based on temporal_aggregate
    
@@ -56,6 +55,7 @@ temporal_aggregation <- function()
   start_end_event$Event <- as.character(start_end_event$Event)
   start_end_event$StartTime <- as.character(start_end_event$StartTime)
   start_end_event$EndTime <- as.character(start_end_event$EndTime)
+  write.table(start_end_event, start_end_event_file, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
   start_end_event
 }
 
@@ -122,7 +122,8 @@ find_match <- function(input_endtime, input_event, events)
 
 visualize_events <- function()
 {
-  image_file <- "~/cleartrail_analytics/figures/timeline_view.png"
+  #image_file <- "~/cleartrail_analytics/figures/timeline_view_SET3_TC2.png"
+  image_file <- "~/cleartrail_analytics/figures/timeline_view_SET2_DevQA_DataSet1.png"
   
   #Process the predicted events and timeline data
   start_end_event <- temporal_aggregation()
@@ -134,7 +135,8 @@ visualize_events <- function()
   #start_end_event <- start_end_event[, !(colnames(start_end_event) %in% c("StartTime", "EndTime"))]
   
   #Process the actual events and timeline data
-  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Set_II.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET2/DevQA_DataSet1/FP_Twitter_17_Feb.csv"
   events <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("character", "Date", "Date"),
                     data.table = TRUE)
@@ -143,7 +145,7 @@ visualize_events <- function()
   events[, Event := apply(events, 1, function(row) gsub(" ", "_", as.character(row["Event"])))]
   events[(Event %in% c("User_Login", "User_mouse_drag_end", "User_mouse_wheel_down", "Like")), Event := "Other"]
   events[(Event == "Reply_Tweet_Text_and_Image"), Event := "Tweet+Image"]
-  events[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only")), Event := "Tweet_Text_Only"]
+  events[(Event %in% c("Reply_Tweet_Text_Only", "ReTweet", "Tweet_Only", "Tweet", "Reply_Tweet")), Event := "Tweet_Text_Only"]
   
   events <- as.data.frame(events)
   events <- fill_gaps(events)
