@@ -11,13 +11,16 @@ lookup_event <- function(LocalTime, events)
   matching_row[, Event]
 }
  
+#The following method is called for generating training and/or testing data, when the user chooses to retrain the model 
+#or run the full-fledged training + testing. That's why this looks up the events corresponding to the timestamps.
 
-prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events_file, hidden_and_vis_states_file)
+prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events_file, ts_specific_features_file)
 {
   revised_packets <- fread(revised_pkt_data_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
                     data.table = TRUE)
+  
   setkey(revised_packets, session_id, LocalTime)
   revised_packets <- revised_packets[order(session_id, LocalTime),]
   
@@ -44,16 +47,16 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
   #Keep only one between Tx and Rx as one of them is always 0
   revised_packets[, pkt_bytes := ifelse(Tx > 0, Tx, Rx)]
   
-  #Join the timestamp-related aggregated features with the timestamps in this data to introduce additional features.
-  hidden_and_vis_states <- fread(hidden_and_vis_states_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  #Join the timestamp-related aggregated features with the timestamps in this data to introduce additional features. There will be no actual events in the timestamp-related aggregated features data.
+  ts_specific_features <- fread(ts_specific_features_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
-                                   "character", "numeric", "numeric", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", 
                                    "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
                     data.table = TRUE)
-  hidden_and_vis_states[, Event := NULL]
-  setkey(hidden_and_vis_states, LocalTime)
+  ts_specific_features[, Event := NULL]
+  setkey(ts_specific_features, LocalTime)
   setkey(revised_packets, LocalTime)
-  revised_packets <- revised_packets[hidden_and_vis_states, nomatch = 0]
+  revised_packets <- revised_packets[ts_specific_features, nomatch = 0]
     
   #Change the key back to session_id and LocalTime so that all packets for a session are together
   setkey(revised_packets, session_id, LocalTime)
@@ -73,8 +76,12 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
   revised_packets
 }
 
-prepare_data_for_label_gen_only <- function(revised_pkt_data_file, hidden_and_vis_states_file)
+#The following method is called when the user chooses to generate the predicted labels of the collected trace only. There are no known events
+#corresponding to the timestamps, hence that lookup is not performed. 
+
+prepare_data_for_label_gen_only <- function(revised_pkt_data_file, ts_specific_features_file)
 {
+  cat(paste("revised_pkt_data_file = ", revised_pkt_data_file, ", ts_specific_features_file = ", ts_specific_features_file, "\n", sep = ""))
   revised_packets <- fread(revised_pkt_data_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
@@ -86,14 +93,14 @@ prepare_data_for_label_gen_only <- function(revised_pkt_data_file, hidden_and_vi
   revised_packets[, pkt_bytes := ifelse(Tx > 0, Tx, Rx)]
   
   #Join the timestamp-related aggregated features with the timestamps in this data to introduce additional features. There will be no actual events.
-  hidden_and_vis_states <- fread(hidden_and_vis_states_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+  ts_specific_features <- fread(ts_specific_features_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
                                    "numeric", "numeric", "numeric", "numeric", 
                                    "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
                     data.table = TRUE)
-  setkey(hidden_and_vis_states, LocalTime)
+  setkey(ts_specific_features, LocalTime)
   setkey(revised_packets, LocalTime)
-  revised_packets <- revised_packets[hidden_and_vis_states, nomatch = 0]
+  revised_packets <- revised_packets[ts_specific_features, nomatch = 0]
     
   #Change the key back to session_id and LocalTime so that all packets for a session are together
   setkey(revised_packets, session_id, LocalTime)
@@ -108,18 +115,13 @@ prepare_data_for_label_gen_only <- function(revised_pkt_data_file, hidden_and_vi
   revised_packets$Direction <- as.factor(revised_packets$Direction)
   revised_packets$majority_domain <- as.factor(revised_packets$majority_domain)
   
-  cat("From prepare_data_for_label_gen_only\n")
-  print(levels(revised_packets$DomainName))
-  print(levels(revised_packets$Direction))
-  print(levels(revised_packets$majority_domain))
-  
   revised_packets
 }
 
 
-prepare_training_data <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
+prepare_training_data <- function(revised_pkts_trg, events_trg, ts_specific_features_trg)
 {
-  training_data <- prepare_data_for_detecting_event_types(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
+  training_data <- prepare_data_for_detecting_event_types(revised_pkts_trg, events_trg, ts_specific_features_trg)
   cat("Original distribution of training data\n")
   print(table(training_data$Event))  
                                                          
@@ -153,9 +155,10 @@ prepare_training_data <- function(revised_pkts_trg, events_trg, hidden_and_vis_s
   training_data
 }
 
-prepare_test_data <- function(revised_pkts_test, events_test, hidden_and_vis_states_test)
+prepare_test_data <- function(revised_pkts_test, events_test, ts_specific_features_test)
 {
-  test_data <- prepare_data_for_detecting_event_types(revised_pkts_test, events_test, hidden_and_vis_states_test)
+  cat(paste("revised_pkts_test = ", revised_pkts_test, ", ts_specific_features_test = ", ts_specific_features_test, "\n", sep = ""))
+  test_data <- prepare_data_for_detecting_event_types(revised_pkts_test, events_test, ts_specific_features_test)
   
   cat("Original distribution of test data\n")
   print(table(test_data$Event)) 
@@ -184,12 +187,12 @@ prepare_test_data <- function(revised_pkts_test, events_test, hidden_and_vis_sta
 }
 
 
-classify_packets_naive_bayes <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg, 
-                                         revised_pkts_test, events_test, hidden_and_vis_states_test, 
+classify_packets_naive_bayes <- function(revised_pkts_trg, events_trg, ts_specific_features_trg, 
+                                         revised_pkts_test, events_test, ts_specific_features_test, 
                                          predicted_event_types, saved_model)
 {
-  training_data <- prepare_training_data(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
-  test_data <- prepare_test_data(revised_pkts_test, events_test, hidden_and_vis_states_test)
+  training_data <- prepare_training_data(revised_pkts_trg, events_trg, ts_specific_features_trg)
+  test_data <- prepare_test_data(revised_pkts_test, events_test, ts_specific_features_test)
   
   #Remove variables that are not suitable for modeling, including variables that are perfectly/highly correlated with other variables, e.g., frac_downstream_packets is perfectly correlated with
   #frac_upstream_packets.
@@ -211,9 +214,9 @@ classify_packets_naive_bayes <- function(revised_pkts_trg, events_trg, hidden_an
   saveRDS(bestmod, saved_model)
 }
 
-retrain_only <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg, saved_model)
+retrain_only <- function(revised_pkts_trg, events_trg, ts_specific_features_trg, saved_model)
 {
-  training_data <- prepare_training_data(revised_pkts_trg, events_trg, hidden_and_vis_states_trg)
+  training_data <- prepare_training_data(revised_pkts_trg, events_trg, ts_specific_features_trg)
   
   cols <- c("LocalTime", "session_id", "frac_downstream_packets", "frac_downstream_bytes")  
   bestmod <- NaiveBayes(Event ~ ., data = training_data[, .SD, .SDcols = -cols], usekernel = TRUE, fL = 1)
@@ -221,11 +224,11 @@ retrain_only <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg
   saveRDS(bestmod, saved_model)
 }
 
-generate_labels_only <- function(revised_pkts_test, hidden_and_vis_states_test, 
+generate_labels_only <- function(revised_pkts_test, ts_specific_features_test, 
                                  predicted_event_types, saved_model)
 {
   bestmod <- readRDS(saved_model)
-  test_data <- prepare_data_for_label_gen_only(revised_pkts_test, hidden_and_vis_states_test)
+  test_data <- prepare_data_for_label_gen_only(revised_pkts_test, ts_specific_features_test)
   
   #Note that we are not going to measure precision/recall as we do not know the actual labels for the test data
   
