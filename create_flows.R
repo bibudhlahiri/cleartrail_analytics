@@ -1,42 +1,35 @@
 library(data.table)
 
-#A wrapper function for creating session and flow data for multiple networks, where a single raw file contains the data for all these networks together.
-create_session_data_multiple_networks <- function()
+create_session_data <- function()
 {
-  foldername <- "~/cleartrail_osn/SET4/"
-  raw_pkts_filename <- "Set4_TC1_PacketDataSet"
-  raw_pkts_mult_networks <- fread(paste(foldername, raw_pkts_filename, ".csv", sep = ""), header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
-                    colClasses = c("numeric", "Date", "character", "numeric", "numeric", "numeric", "numeric", "character", "character", "character"),
-                    data.table = TRUE)
-  raw_pkts_mult_networks[, LocalTime := strftime(strptime(raw_pkts_mult_networks$LocalTime, "%d/%b/%Y %H:%M:%S"), "%H:%M:%S")]
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/23_Feb_2016_Packets_DataSet_TC1.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/23_Feb_2016_Packets_DataSet_TC2.csv"
   
-  network_ids <- unique(raw_pkts_mult_networks$NetworkID)
-  setkey(raw_pkts_mult_networks, NetworkID)
-  for (network_id in network_ids)
-  {
-    raw_pkts_single_network <- raw_pkts_mult_networks[(NetworkID == network_id),]
-    revised_pkts_file <- paste(foldername, "Revised_", raw_pkts_filename, "_", network_id, ".csv", sep = "")
-    create_session_data(raw_pkts_single_network, revised_pkts_file)
-  }
-}
-
-create_session_data <- function(raw_pkts_single_network, revised_pkts_file)
-{      
-  raw_pkts_single_network[, NetworkID := NULL]   
+  this_set <- fread(filename, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character"),
+                    data.table = TRUE)
+  this_set[, LocalTime := strftime(strptime(this_set$LocalTime, "%d/%b/%Y %H:%M:%S"), "%H:%M:%S")] 
+              
   #Get the sessions (unique combinations of server IP, server port, client IP, client port) first. Get the earliest and last timestamps for each, and get the number of packets exchanged also.
   #Identify the server and client IP for each packet. Both can be senders and receivers.
-  raw_pkts_single_network[, ServerIP := apply(raw_pkts_single_network, 1, function(row) get_server_IP(as.character(row["SourceIP"]), as.numeric(row["SourcePort"]), as.character(row["DestIP"]), as.numeric(row["DestPort"])))]
-  raw_pkts_single_network[, ClientIP := apply(raw_pkts_single_network, 1, function(row) get_client_IP(as.character(row["SourceIP"]), as.numeric(row["SourcePort"]), as.character(row["DestIP"]), as.numeric(row["DestPort"])))]
-  raw_pkts_single_network[, ServerPort := apply(raw_pkts_single_network, 1, function(row) get_server_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
-  raw_pkts_single_network[, ClientPort := apply(raw_pkts_single_network, 1, function(row) get_client_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
-  raw_pkts_single_network[, Direction := apply(raw_pkts_single_network, 1, function(row) get_direction(as.numeric(row["DestPort"])))]
+  this_set[, ServerIP := apply(this_set, 1, function(row) get_server_IP(as.character(row["SourceIP"]), as.numeric(row["SourcePort"]), as.character(row["DestIP"]), as.numeric(row["DestPort"])))]
+  this_set[, ClientIP := apply(this_set, 1, function(row) get_client_IP(as.character(row["SourceIP"]), as.numeric(row["SourcePort"]), as.character(row["DestIP"]), as.numeric(row["DestPort"])))]
+  this_set[, ServerPort := apply(this_set, 1, function(row) get_server_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
+  this_set[, ClientPort := apply(this_set, 1, function(row) get_client_port(as.numeric(row["SourcePort"]), as.numeric(row["DestPort"])))]
+  this_set[, Direction := apply(this_set, 1, function(row) get_direction(as.numeric(row["DestPort"])))]
   
-  setkey(raw_pkts_single_network, ServerIP, ServerPort, ClientIP, ClientPort)
-  sessions <- raw_pkts_single_network[, list(start_time = min(LocalTime), end_time = max(LocalTime), n_packets = length(LocalTime)), by = list(ServerIP, ServerPort, ClientIP, ClientPort)] 
+  #The major domains are *.twimg.com, pbs.twimg.com, twitter.com and upload.twitter.com. Put everything else in "minor_domain"
+  this_set[!(DomainName %in% c("*.twimg.com", "pbs.twimg.com", "twitter.com", "upload.twitter.com")), DomainName := "minor_domain"]
+  
+  setkey(this_set, ServerIP, ServerPort, ClientIP, ClientPort)
+  sessions <- this_set[, list(start_time = min(LocalTime), end_time = max(LocalTime), n_packets = length(LocalTime)), by = list(ServerIP, ServerPort, ClientIP, ClientPort)] 
   sessions$duration <- as.numeric(difftime(strptime(sessions$end_time, "%H:%M:%S"), strptime(sessions$start_time, "%H:%M:%S"), units = "secs"))
   sessions[, session_id := 1:nrow(sessions)]
-  revised_packet_data <- create_flow_data(raw_pkts_single_network, sessions)
-  write.table(revised_packet_data, revised_pkts_file, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
+  revised_packet_data <- create_flow_data(this_set, sessions)
+  
+  #filename <- "/Users/blahiri/cleartrail_osn/SET3/TC1/RevisedPacketData_23_Feb_2016_TC1.csv"
+  filename <- "/Users/blahiri/cleartrail_osn/SET3/TC2/RevisedPacketData_23_Feb_2016_TC2.csv"
+  write.table(revised_packet_data, filename, sep = ",", row.names = FALSE, col.names = TRUE, quote = FALSE)
 }
 
 create_flow_data <- function(packets, sessions)
