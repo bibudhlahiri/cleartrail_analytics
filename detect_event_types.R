@@ -55,10 +55,11 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
   setkey(revised_packets, LocalTime)
   revised_packets <- revised_packets[hidden_and_vis_states, nomatch = 0]
     
-  #Change the key back to session_id and LocalTime so that all packets for a session are printed together
+  #Change the key back to session_id and LocalTime so that all packets for a session are together
   setkey(revised_packets, session_id, LocalTime)
   
-  #Drop columns that are not needed for modeling. We need to retain the timestamp in the test data so that we can group by it later to get the majority vote among labeled events for a timestamp.
+  #Drop columns that are not needed for modeling. We need to retain the LocalTime in the test data so that we can group by it later to get the majority vote among labeled events for a LocalTime.
+  #Timestamp is a number which we drop whereas LocalTime is the actual HH24:MI:SS time.
    
   revised_packets[ ,`:=`(Timestamp = NULL, SourcePort = NULL, DestPort = NULL, SourceIP = NULL, DestIP = NULL, ServerIP = NULL, ClientIP = NULL, 
                         ServerPort = NULL, ClientPort = NULL, flow_id = NULL, Tx = NULL, Rx = NULL)]
@@ -68,6 +69,49 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
   revised_packets$Direction <- as.factor(revised_packets$Direction)
   revised_packets$Event <- as.factor(revised_packets$Event)
   revised_packets$majority_domain <- as.factor(revised_packets$majority_domain)
+  
+  revised_packets
+}
+
+prepare_data_for_label_gen_only <- function(revised_pkt_data_file, hidden_and_vis_states_file)
+{
+  revised_packets <- fread(revised_pkt_data_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
+                                   "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),
+                    data.table = TRUE)
+  setkey(revised_packets, session_id, LocalTime)
+  revised_packets <- revised_packets[order(session_id, LocalTime),]
+  
+  #Keep only one between Tx and Rx as one of them is always 0
+  revised_packets[, pkt_bytes := ifelse(Tx > 0, Tx, Rx)]
+  
+  #Join the timestamp-related aggregated features with the timestamps in this data to introduce additional features. There will be no actual events.
+  hidden_and_vis_states <- fread(hidden_and_vis_states_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                    colClasses = c("Date", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
+                    data.table = TRUE)
+  setkey(hidden_and_vis_states, LocalTime)
+  setkey(revised_packets, LocalTime)
+  revised_packets <- revised_packets[hidden_and_vis_states, nomatch = 0]
+    
+  #Change the key back to session_id and LocalTime so that all packets for a session are together
+  setkey(revised_packets, session_id, LocalTime)
+  
+  #Drop columns that are not needed for modeling. We need to retain the LocalTime in the (test) data so that we can group by it later to get the majority vote among labeled events for a LocalTime.
+  #Timestamp is a number which we drop whereas LocalTime is the actual HH24:MI:SS time.
+  
+  revised_packets[ ,`:=`(Timestamp = NULL, SourcePort = NULL, DestPort = NULL, SourceIP = NULL, DestIP = NULL, ServerIP = NULL, ClientIP = NULL, 
+                        ServerPort = NULL, ClientPort = NULL, flow_id = NULL, Tx = NULL, Rx = NULL)]
+  
+  revised_packets$DomainName <- as.factor(revised_packets$DomainName)
+  revised_packets$Direction <- as.factor(revised_packets$Direction)
+  revised_packets$majority_domain <- as.factor(revised_packets$majority_domain)
+  
+  cat("From prepare_data_for_label_gen_only\n")
+  print(levels(revised_packets$DomainName))
+  print(levels(revised_packets$Direction))
+  print(levels(revised_packets$majority_domain))
   
   revised_packets
 }
@@ -177,11 +221,11 @@ retrain_only <- function(revised_pkts_trg, events_trg, hidden_and_vis_states_trg
   saveRDS(bestmod, saved_model)
 }
 
-generate_labels_only <- function(revised_pkts_test, events_test, hidden_and_vis_states_test, 
+generate_labels_only <- function(revised_pkts_test, hidden_and_vis_states_test, 
                                  predicted_event_types, saved_model)
 {
   bestmod <- readRDS(saved_model)
-  test_data <- prepare_test_data(revised_pkts_test, events_test, hidden_and_vis_states_test)
+  test_data <- prepare_data_for_label_gen_only(revised_pkts_test, hidden_and_vis_states_test)
   
   #Note that we are not going to measure precision/recall as we do not know the actual labels for the test data
   
