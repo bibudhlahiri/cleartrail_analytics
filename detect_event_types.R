@@ -53,7 +53,6 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
                                    "numeric", "numeric", "numeric", "numeric", 
                                    "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"),
                     data.table = TRUE)
-  ts_specific_features[, Event := NULL]
   setkey(ts_specific_features, LocalTime)
   setkey(revised_packets, LocalTime)
   revised_packets <- revised_packets[ts_specific_features, nomatch = 0]
@@ -81,7 +80,6 @@ prepare_data_for_detecting_event_types <- function(revised_pkt_data_file, events
 
 prepare_data_for_label_gen_only <- function(revised_pkt_data_file, ts_specific_features_file)
 {
-  cat(paste("revised_pkt_data_file = ", revised_pkt_data_file, ", ts_specific_features_file = ", ts_specific_features_file, "\n", sep = ""))
   revised_packets <- fread(revised_pkt_data_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
                     colClasses = c("numeric", "Date", "numeric", "numeric", "numeric", "numeric", "character", "character", "character", 
                                    "numeric", "numeric", "numeric", "numeric", "character", "numeric", "numeric"),

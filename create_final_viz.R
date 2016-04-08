@@ -5,7 +5,31 @@ require(scales)
 library(grid)
 library(gridExtra)
 
-#Using data.frame
+#Temporal aggregation for label generation only, when the actual events will not be present. Just generate the start and end times of events based on the 
+#majority predicted event at each timestamp, i.e., if there are multiple packets at the same timestamp, each packet will have its own predicted event type, take 
+#the majority across all the packets at that timestamp.
+
+temporal_aggregation_for_label_gen_only <- function(predicted_event_types_file, start_end_event_file)
+{
+  predicted_event_types <- fread(predicted_event_types_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
+                       colClasses = c("Date", "character", "character", "numeric",  
+                                      "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                      "numeric", "character", "numeric", "numeric", "numeric", 
+                                      "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                      "numeric", "numeric", "numeric", "numeric", "character"),
+                       data.table = TRUE)
+  predicted_event_types <- predicted_event_types[, .SD, .SDcols = c("LocalTime", "predicted_event")]
+  setkey(predicted_event_types, LocalTime)
+  
+  #Predicted events may have multiple distinct values, so take the majority.
+  temporal_aggregate <- predicted_event_types[, list(majority_predicted_event = get_majority_predicted_event(.SD)), by = LocalTime,
+                                              .SDcols=c("predicted_event")]
+  start_end_event <- weave_start_end_times(temporal_aggregate, start_end_event_file)
+}
+
+#Temporal aggregation for full-fledged training and testing. The difference with temporal_aggregation_for_label_gen_only() is that the file with predicted events will have the 
+#actual events too, and hence this method will tell what fraction of the timestamps have predicted events same as the actual event.
+
 temporal_aggregation <- function(predicted_event_types_file, start_end_event_file)
 {
   predicted_event_types <- fread(predicted_event_types_file, header = TRUE, sep = ",", stringsAsFactors = FALSE, showProgress = TRUE, 
@@ -22,6 +46,14 @@ temporal_aggregation <- function(predicted_event_types_file, start_end_event_fil
                                               .SDcols=c("Event", "predicted_event")]
   cat(paste("\nAccuracy based on temporal_aggregate is ", nrow(temporal_aggregate[(actual_event == majority_predicted_event),])/nrow(temporal_aggregate), "\n", sep = "")) 
   
+  start_end_event <- weave_start_end_times(temporal_aggregate, start_end_event_file)
+}
+
+#This method actually derives the start and end times and delivers the final result based on the consecutive predicted labels of timestamps.
+#Called from both temporal_aggregation_for_label_gen_only() and temporal_aggregation().
+
+weave_start_end_times <- function(temporal_aggregate, start_end_event_file)
+{
   #Aggregate start and end times based on temporal_aggregate
    
   n_temporal_aggregate <- nrow(temporal_aggregate)
@@ -193,5 +225,5 @@ visualize_events <- function(image_file, start_end_event_file, events_test)
               plot.title = element_text(size = rel(2), colour = "blue")) + coord_flip()
   print(p)
   aux <- dev.off()
-  list(start_end_event = start_end_event, events = events)
+  #list(start_end_event = start_end_event, events = events)
 }

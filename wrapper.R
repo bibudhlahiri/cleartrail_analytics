@@ -18,19 +18,19 @@ run_everything <- function()
   
   if (run_mode == "1")
   {
-    suppressWarnings(generate_labels_only(revised_pkts_test, events_test, hidden_and_vis_states_test, 
-                                 predicted_event_types, saved_model))
-    temporal_aggregation(predicted_event_types, start_end_event_file)
+    suppressWarnings(generate_labels_only(revised_pkts_test, ts_specific_features_test, 
+                                          predicted_event_types, saved_model))
+    temporal_aggregation_for_label_gen_only(predicted_event_types, start_end_event_file)
   }
   else if (run_mode == "2")
   {
-    retrain_only(revised_pkts_trg, events_trg, hidden_and_vis_states_trg, saved_model)
+    retrain_only(revised_pkts_trg, events_trg, ts_specific_features_trg, saved_model)
   }
   else 
   {
     #run_mode == "3"
-    suppressWarnings(classify_packets_naive_bayes(revised_pkts_trg, events_trg, hidden_and_vis_states_trg, 
-                                 revised_pkts_test, events_test, hidden_and_vis_states_test, 
+    suppressWarnings(classify_packets_naive_bayes(revised_pkts_trg, events_trg, ts_specific_features_trg, 
+                                 revised_pkts_test, events_test, ts_specific_features_test, 
                                  predicted_event_types, saved_model))
     start_end_event <- temporal_aggregation(predicted_event_types, start_end_event_file)
     visualize_events(image_file, start_end_event_file, events_test)
